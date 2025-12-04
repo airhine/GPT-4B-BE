@@ -73,6 +73,7 @@ const parseBusinessCardText = (text) => {
   
   // Simple parsing logic (can be improved with ML/NLP)
   const result = {
+    rawText: text, // 원본 텍스트 추가
     name: '',
     position: '',
     company: '',
@@ -124,6 +125,7 @@ const parseBusinessCardText = (text) => {
 const mockOCRResponse = () => {
   const mockResponses = [
     {
+      rawText: "박소윤\nBrand Strategist\nLuna Collective\n010-1234-5678\nsoyoon@luna.co",
       name: "박소윤",
       position: "Brand Strategist",
       company: "Luna Collective",
@@ -131,6 +133,7 @@ const mockOCRResponse = () => {
       email: "soyoon@luna.co",
     },
     {
+      rawText: "이도현\nAI Researcher\nNova Labs\n010-8765-4321\ndohyun@nova.ai",
       name: "이도현",
       position: "AI Researcher",
       company: "Nova Labs",
@@ -138,6 +141,7 @@ const mockOCRResponse = () => {
       email: "dohyun@nova.ai",
     },
     {
+      rawText: "최하늘\nProduct Designer\nOrbit Studio\n010-2345-6789\nha-neul@orbit.studio",
       name: "최하늘",
       position: "Product Designer",
       company: "Orbit Studio",
