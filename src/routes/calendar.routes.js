@@ -37,8 +37,8 @@ router.get('/events', async (req, res) => {
 // @access  Private
 router.post('/events', [
   body('title').notEmpty().trim(),
-  body('startDate').isISO8601(),
-  body('endDate').isISO8601(),
+  body('startDate').notEmpty().isString(),
+  body('endDate').notEmpty().isString(),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
