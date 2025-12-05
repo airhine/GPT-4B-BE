@@ -1,7 +1,7 @@
-import express from 'express';
-import { body, validationResult } from 'express-validator';
-import BusinessCard from '../models/BusinessCard.model.js';
-import { authenticate } from '../middleware/auth.middleware.js';
+import express from "express";
+import { body, validationResult } from "express-validator";
+import BusinessCard from "../models/BusinessCard.model.js";
+import { authenticate } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
 
@@ -11,11 +11,15 @@ router.use(authenticate);
 // @route   GET /api/cards
 // @desc    Get all business cards for user
 // @access  Private
-router.get('/', async (req, res) => {
+router.get("/", async (req, res) => {
   try {
     const { search, page = 1, limit = 20 } = req.query;
 
-    const cards = await BusinessCard.findByUserId(req.user.id, { search, page, limit });
+    const cards = await BusinessCard.findByUserId(req.user.id, {
+      search,
+      page,
+      limit,
+    });
     const total = await BusinessCard.countByUserId(req.user.id, search);
 
     res.json({
@@ -26,12 +30,12 @@ router.get('/', async (req, res) => {
         limit: parseInt(limit),
         total,
         pages: Math.ceil(total / limit),
-      }
+      },
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 });
@@ -39,25 +43,25 @@ router.get('/', async (req, res) => {
 // @route   GET /api/cards/:id
 // @desc    Get single business card
 // @access  Private
-router.get('/:id', async (req, res) => {
+router.get("/:id", async (req, res) => {
   try {
     const card = await BusinessCard.findById(req.params.id, req.user.id);
 
     if (!card) {
       return res.status(404).json({
         success: false,
-        message: 'Business card not found'
+        message: "Business card not found",
       });
     }
 
     res.json({
       success: true,
-      data: card
+      data: card,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 });
@@ -65,110 +69,160 @@ router.get('/:id', async (req, res) => {
 // @route   POST /api/cards
 // @desc    Create new business card
 // @access  Private
-router.post('/', [
-  body('name').notEmpty().trim(),
-  body('email').optional().isEmail().normalizeEmail(),
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
+router.post(
+  "/",
+  [
+    body("name").notEmpty().trim(),
+    body("email").optional().isEmail().normalizeEmail(),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          errors: errors.array(),
+        });
+      }
+
+      // Check card limit
+      const cardCount = await BusinessCard.countByUserId(req.user.id);
+      if (cardCount >= req.user.cardLimit) {
+        return res.status(403).json({
+          success: false,
+          message: `Card limit reached (${req.user.cardLimit}). Please upgrade to premium.`,
+        });
+      }
+
+      const card = await BusinessCard.create({
+        ...req.body,
+        userId: req.user.id,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: card,
+      });
+    } catch (error) {
+      res.status(500).json({
         success: false,
-        errors: errors.array()
+        message: error.message,
       });
     }
-
-    // Check card limit
-    const cardCount = await BusinessCard.countByUserId(req.user.id);
-    if (cardCount >= req.user.cardLimit) {
-      return res.status(403).json({
-        success: false,
-        message: `Card limit reached (${req.user.cardLimit}). Please upgrade to premium.`
-      });
-    }
-
-    const card = await BusinessCard.create({
-      ...req.body,
-      userId: req.user.id
-    });
-
-    res.status(201).json({
-      success: true,
-      data: card
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
   }
-});
+);
 
 // @route   PUT /api/cards/:id
 // @desc    Update business card
 // @access  Private
-router.put('/:id', [
-  body('email').optional().isEmail().normalizeEmail(),
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        errors: errors.array()
-      });
+router.put(
+  "/:id",
+  // email 정리 미들웨어 (validation 전에 실행)
+  (req, res, next) => {
+    // email이 빈 값이거나 "@"만 있으면 제거
+    if (
+      !req.body.email ||
+      req.body.email === "@" ||
+      req.body.email.trim() === ""
+    ) {
+      delete req.body.email;
+    }
+    // null 값들도 제거 (DB 업데이트 시 문제 방지)
+    Object.keys(req.body).forEach((key) => {
+      if (req.body[key] === null || req.body[key] === "null") {
+        delete req.body[key];
+      }
+    });
+    next();
+  },
+  [body("email").optional().isEmail().normalizeEmail()],
+  async (req, res) => {
+    // 디버깅: 받은 데이터 로그 (validation 전에 찍기)
+    console.log("==========================================");
+    console.log("📇 [명함 수정] PUT /api/cards/:id");
+    console.log("==========================================");
+    console.log(`명함 ID: ${req.params.id}`);
+    console.log(`사용자 ID: ${req.user?.id}`);
+    console.log(`받은 데이터:`, JSON.stringify(req.body, null, 2));
+    if (req.body.design) {
+      console.log(`✅ design 값 수신: "${req.body.design}"`);
+    } else {
+      console.log(`⚠️  design 값 없음`);
     }
 
-    const card = await BusinessCard.update(
-      req.params.id,
-      req.user.id,
-      req.body
-    );
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        console.log(
+          `❌ Validation 실패:`,
+          JSON.stringify(errors.array(), null, 2)
+        );
+        return res.status(400).json({
+          success: false,
+          errors: errors.array(),
+        });
+      }
 
-    if (!card) {
-      return res.status(404).json({
+      // 디버깅: validation 통과
+      console.log(`✅ Validation 통과`);
+
+      const card = await BusinessCard.update(
+        req.params.id,
+        req.user.id,
+        req.body
+      );
+
+      // 디버깅: 업데이트 결과 로그
+      console.log(
+        `업데이트 결과:`,
+        card ? `성공 (design: ${card.design})` : "실패"
+      );
+      console.log("==========================================\n");
+
+      if (!card) {
+        return res.status(404).json({
+          success: false,
+          message: "Business card not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        data: card,
+      });
+    } catch (error) {
+      res.status(500).json({
         success: false,
-        message: 'Business card not found'
+        message: error.message,
       });
     }
-
-    res.json({
-      success: true,
-      data: card
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
   }
-});
+);
 
 // @route   DELETE /api/cards/:id
 // @desc    Delete business card
 // @access  Private
-router.delete('/:id', async (req, res) => {
+router.delete("/:id", async (req, res) => {
   try {
     const deleted = await BusinessCard.delete(req.params.id, req.user.id);
 
     if (!deleted) {
       return res.status(404).json({
         success: false,
-        message: 'Business card not found'
+        message: "Business card not found",
       });
     }
 
     res.json({
       success: true,
-      message: 'Business card deleted successfully'
+      message: "Business card deleted successfully",
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 });
 
 export default router;
-
