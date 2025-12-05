@@ -43,11 +43,27 @@ export const errorHandler = (err, req, res, next) => {
     });
   }
 
+  // 응답이 이미 전송되었는지 확인
+  if (res.headersSent) {
+    return next(err);
+  }
+
   // Default error
-  res.status(err.statusCode || 500).json({
+  const statusCode = err.statusCode || 500;
+  const errorResponse = {
     success: false,
     message: err.message || 'Server error',
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-  });
+  };
+
+  try {
+    res.status(statusCode).json(errorResponse);
+  } catch (sendError) {
+    console.error('Failed to send error response:', sendError);
+    // 최후의 수단: 텍스트 응답
+    if (!res.headersSent) {
+      res.status(statusCode).send(JSON.stringify(errorResponse));
+    }
+  }
 };
 

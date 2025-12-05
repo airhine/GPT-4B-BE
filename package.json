@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "test": "jest"
+    "test": "jest",
+    "test:auth": "node tests/auth.test.js",
+    "test:oauth:google": "node tests/oauth.test.js google",
+    "test:oauth:apple": "node tests/oauth.test.js apple"
   },
   "keywords": [
     "gpt-4b",
@@ -28,7 +31,10 @@
     "axios": "^1.6.2",
     "express-validator": "^7.0.1",
     "helmet": "^7.1.0",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "google-auth-library": "^9.0.0",
+    "jwks-rsa": "^3.1.0",
+    "chromadb": "^1.8.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.2",

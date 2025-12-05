@@ -6,18 +6,77 @@ import axios from "axios";
  * @param {string} provider - LLM provider ('gpt', 'claude', 'gemini')
  * @returns {Promise<string>} LLM response
  */
-export const processLLMChat = async (messages, provider = "gemini") => {
+export const processLLMChat = async (messages, provider = "gpt") => {
   try {
-    if (provider === "gemini") {
+    if (provider === "gpt") {
+      return await processWithGPT(messages);
+    } else if (provider === "gemini") {
       return await processWithGemini(messages);
     } else {
       throw new Error(
-        `Unsupported LLM provider: ${provider}. Only 'gemini' is supported.`
+        `Unsupported LLM provider: ${provider}. Supported providers: 'gpt', 'gemini'.`
       );
     }
   } catch (error) {
     console.error("LLM Service Error:", error);
     throw new Error("LLM processing failed");
+  }
+};
+
+/**
+ * Process with OpenAI GPT
+ */
+const processWithGPT = async (messages) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return mockLLMResponse();
+  }
+
+  try {
+    // Format messages for OpenAI
+    // OpenAI expects { role: "user" | "assistant" | "system", content: "..." }
+    const formattedMessages = messages.map((msg) => {
+      let role = msg.role;
+      // Map "model" role to "assistant" for OpenAI
+      if (role === "model") {
+        role = "assistant";
+      }
+      return {
+        role: role,
+        content: msg.content,
+      };
+    });
+
+    const response = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-3.5-turbo",
+        messages: formattedMessages,
+        temperature: 0.7,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+      }
+    );
+
+    if (response.data.choices && response.data.choices.length > 0) {
+      return response.data.choices[0].message.content;
+    }
+
+    throw new Error("OpenAI API returned no choices");
+  } catch (error) {
+    console.error("OpenAI API Error:", error);
+    
+    // OpenAI API 에러 메시지 추출
+    if (error.response?.data?.error?.message) {
+      throw new Error(`OpenAI API Error: ${error.response.data.error.message}`);
+    } else if (error.message) {
+      throw new Error(`OpenAI API Error: ${error.message}`);
+    } else {
+      throw new Error("OpenAI API 호출에 실패했습니다. API 키를 확인해주세요.");
+    }
   }
 };
 

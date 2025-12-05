@@ -7,6 +7,7 @@ GPT-4b 선물 추천 및 명함 관리 애플리케이션의 백엔드 API 서�
 - **Runtime**: Node.js (ES Modules)
 - **Framework**: Express.js
 - **Database**: MySQL (mysql2)
+- **Vector Database**: ChromaDB
 - **Authentication**: JWT (JSON Web Tokens)
 - **Validation**: express-validator
 - **Security**: Helmet, CORS
@@ -50,7 +51,8 @@ GPT-4b 선물 추천 및 명함 관리 애플리케이션의 백엔드 API 서�
 BE/
 ├── src/
 │   ├── config/          # 설정 파일
-│   │   └── database.js  # MySQL 연결 풀 설정
+│   │   ├── database.js  # MySQL 연결 풀 설정
+│   │   └── chromadb.js  # ChromaDB 연결 설정
 │   ├── middleware/      # 미들웨어
 │   │   ├── auth.middleware.js
 │   │   ├── errorHandler.js
@@ -71,7 +73,8 @@ BE/
 │   │   └── user.routes.js
 │   ├── services/        # 비즈니스 로직
 │   │   ├── ocr.service.js
-│   │   └── llm.service.js
+│   │   ├── llm.service.js
+│   │   └── chromadb.service.js  # ChromaDB 서비스
 │   ├── utils/           # 유틸리티
 │   │   └── jwt.js
 │   └── server.js        # 서버 진입점
@@ -119,6 +122,9 @@ GOOGLE_CLOUD_VISION_API_KEY=your-google-cloud-vision-api-key
 OPENAI_API_KEY=your-openai-api-key
 ANTHROPIC_API_KEY=your-anthropic-api-key
 GOOGLE_GEMINI_API_KEY=your-google-gemini-api-key
+
+# ChromaDB (벡터 데이터베이스)
+CHROMADB_PATH=http://localhost:8000
 ```
 
 ### 3. MySQL 데이터베이스 설정
@@ -130,7 +136,20 @@ MySQL 서버가 실행 중이어야 합니다. 데이터베이스 `backendTest`�
 CREATE DATABASE IF NOT EXISTS backendTest CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-### 4. 서버 실행
+### 4. ChromaDB 설정
+
+ChromaDB는 선물 정보의 임베딩 벡터를 저장하는 벡터 데이터베이스입니다.
+
+1. ChromaDB 서버를 실행하세요 (기본 포트: 8000)
+2. `.env` 파일에 `CHROMADB_PATH`를 설정하세요 (기본값: `http://localhost:8000`)
+3. CSV 파일 형식의 선물 데이터를 ChromaDB에 로드할 수 있습니다
+
+```bash
+# ChromaDB 서버 실행 (Docker 사용 예시)
+docker run -p 8000:8000 chromadb/chroma
+```
+
+### 5. 서버 실행
 
 ```bash
 # 개발 모드 (nodemon 사용)
