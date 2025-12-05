@@ -189,6 +189,52 @@ router.post(
   }
 );
 
+// @route   POST /api/chat/create-history
+// @desc    Create chat history with full conversation
+// @access  Private
+router.post("/create-history", [
+  body("messages").isArray().notEmpty(),
+  body("title").optional().trim(),
+  body("llmProvider").optional().isIn(["gpt", "claude", "gemini"]),
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array(),
+      });
+    }
+
+    const { messages, title, llmProvider = "gpt" } = req.body;
+
+    // Ensure messages have proper format
+    const formattedMessages = messages.map(msg => ({
+      role: msg.role || "assistant",
+      content: msg.content || "",
+      timestamp: msg.timestamp || new Date().toISOString(),
+    }));
+
+    const chat = await Chat.create({
+      userId: req.user.id,
+      llmProvider,
+      title: title || "선물 추천 대화",
+      messages: formattedMessages,
+    });
+
+    res.json({
+      success: true,
+      data: chat,
+    });
+  } catch (error) {
+    console.error("Create chat history error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "대화 내역 저장 중 오류가 발생했습니다.",
+    });
+  }
+});
+
 // @route   DELETE /api/chat/:id
 // @desc    Delete chat conversation
 // @access  Private

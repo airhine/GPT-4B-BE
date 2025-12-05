@@ -36,13 +36,25 @@ const getOrCreateCollection = async () => {
       return await chromaClient.getCollection({ name: COLLECTION_NAME });
     }
 
-    // 컬렉션이 없으면 생성
-    return await chromaClient.createCollection({
-      name: COLLECTION_NAME,
-      metadata: {
-        description: "선물 정보 임베딩 데이터",
-      },
-    });
+    // 컬렉션이 없으면 생성. 동시 요청으로 이미 생성된 경우를 대비해 처리.
+    try {
+      return await chromaClient.createCollection({
+        name: COLLECTION_NAME,
+        metadata: {
+          description: "선물 정보 임베딩 데이터",
+        },
+      });
+    } catch (error) {
+      if (
+        error?.message &&
+        (error.message.includes("already exists") ||
+          error.message.includes("resource already exists"))
+      ) {
+        // race condition: 이미 생성되었으므로 가져오기
+        return await chromaClient.getCollection({ name: COLLECTION_NAME });
+      }
+      throw error;
+    }
   } catch (error) {
     console.error("❌ Error getting/creating collection:", error.message);
     throw error;
