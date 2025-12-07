@@ -71,6 +71,26 @@ router.get("/:id", async (req, res) => {
 // @access  Private
 router.post(
   "/",
+  // email 정리 미들웨어 (validation 전에 실행)
+  (req, res, next) => {
+    // email이 빈 값이거나 "@"만 있으면 필드 자체를 제거 (undefined로 설정)
+    if (
+      req.body.email !== undefined && (
+        !req.body.email ||
+        req.body.email === "@" ||
+        (typeof req.body.email === 'string' && req.body.email.trim() === "")
+      )
+    ) {
+      delete req.body.email; // 필드를 완전히 제거하여 validation을 건너뛰게 함
+    }
+    // "null" 문자열을 실제 null로 변환 (FE에서 전달된 경우)
+    Object.keys(req.body).forEach((key) => {
+      if (req.body[key] === "null") {
+        req.body[key] = null;
+      }
+    });
+    next();
+  },
   [
     body("name").notEmpty().trim(),
     body("email").optional().isEmail().normalizeEmail(),
@@ -119,23 +139,27 @@ router.put(
   "/:id",
   // email 정리 미들웨어 (validation 전에 실행)
   (req, res, next) => {
-    // email이 빈 값이거나 "@"만 있으면 제거
+    // email이 빈 값이거나 "@"만 있으면 null로 설정 (삭제된 필드 표시)
+    // 하지만 null일 때는 validation을 건너뛰기 위해 필드를 제거하거나 nullable 옵션 사용
     if (
-      !req.body.email ||
-      req.body.email === "@" ||
-      req.body.email.trim() === ""
+      req.body.email !== undefined && (
+        !req.body.email ||
+        req.body.email === "@" ||
+        (typeof req.body.email === 'string' && req.body.email.trim() === "")
+      )
     ) {
-      delete req.body.email;
+      req.body.email = null;
     }
-    // null 값들도 제거 (DB 업데이트 시 문제 방지)
+    // "null" 문자열을 실제 null로 변환 (FE에서 전달된 경우)
     Object.keys(req.body).forEach((key) => {
-      if (req.body[key] === null || req.body[key] === "null") {
-        delete req.body[key];
+      if (req.body[key] === "null") {
+        req.body[key] = null;
       }
     });
+    // null 값은 유지 (필드 삭제를 위해 null로 저장해야 함)
     next();
   },
-  [body("email").optional().isEmail().normalizeEmail()],
+  [body("email").optional({ nullable: true, checkFalsy: true }).isEmail().normalizeEmail()],
   async (req, res) => {
     // 디버깅: 받은 데이터 로그 (validation 전에 찍기)
     console.log("==========================================");
