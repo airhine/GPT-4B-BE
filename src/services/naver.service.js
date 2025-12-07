@@ -149,9 +149,12 @@ export const getNaverGiftRecommendations = async (query, options = {}) => {
     maxPrice = null,
   } = options;
 
-  // 네이버 쇼핑 검색
-  const searchResult = await searchNaverShopping(query, display * 2, sort); // 필터링 대비 여유있게 가져옴
-  const { items: naverItems, total, lastBuildDate } = searchResult;
+  // 최소 목표 결과 개수 (최소 3개 보장)
+  const targetCount = Math.max(display, 3);
+  
+  // 네이버 쇼핑 검색 (최대한 많은 결과를 가져오기 위해 display * 3으로 증가)
+  let searchResult = await searchNaverShopping(query, Math.min(targetCount * 3, 100), sort); // 네이버 API 최대 100개
+  let { items: naverItems, total, lastBuildDate } = searchResult;
 
   // 형식 변환
   let gifts = formatNaverResultsAsGifts(naverItems);
@@ -167,8 +170,90 @@ export const getNaverGiftRecommendations = async (query, options = {}) => {
     });
   }
 
-  // 결과 개수 제한
-  gifts = gifts.slice(0, display);
+  // 결과가 없거나 목표 개수 미만이면 여러 전략 시도
+  if (gifts.length < targetCount) {
+    console.log(`   ⚠️  "${query}" 검색 결과 부족 (${gifts.length}개/${targetCount}개), 재시도 전략 적용 중...`);
+    
+    // 전략 1: display를 최대한 늘려서 재검색
+    if (total > 0 && gifts.length < targetCount) {
+      console.log(`      → 전략 1: display 최대화 (총 ${total}개 결과 존재, 목표: ${targetCount}개)`);
+      const maxDisplay = Math.min(total, 100); // 네이버 API 최대 100개
+      searchResult = await searchNaverShopping(query, maxDisplay, sort);
+      naverItems = searchResult.items || [];
+      gifts = formatNaverResultsAsGifts(naverItems);
+      
+      // 가격 필터 재적용
+      if (minPrice !== null || maxPrice !== null) {
+        gifts = gifts.filter((gift) => {
+          const price = gift.metadata.price_num;
+          if (price === null) return false;
+          if (minPrice !== null && price < minPrice) return false;
+          if (maxPrice !== null && price > maxPrice) return false;
+          return true;
+        });
+      }
+    }
+
+    // 전략 2: 여전히 부족하면 가격 필터 완화 (최소 가격만 체크)
+    if (gifts.length < targetCount && (minPrice !== null || maxPrice !== null)) {
+      console.log(`      → 전략 2: 가격 필터 완화`);
+      searchResult = await searchNaverShopping(query, Math.min(100, total || 100), sort);
+      naverItems = searchResult.items || [];
+      gifts = formatNaverResultsAsGifts(naverItems);
+      
+      // 최소 가격만 체크 (최대 가격 제한 완화)
+      if (minPrice !== null) {
+        gifts = gifts.filter((gift) => {
+          const price = gift.metadata.price_num;
+          return price !== null && price >= minPrice;
+        });
+      }
+    }
+
+    // 전략 3: 가격 필터 완전 제거
+    if (gifts.length < targetCount && (minPrice !== null || maxPrice !== null)) {
+      console.log(`      → 전략 3: 가격 필터 제거`);
+      searchResult = await searchNaverShopping(query, Math.min(100, total || 100), sort);
+      naverItems = searchResult.items || [];
+      gifts = formatNaverResultsAsGifts(naverItems);
+      // 가격 필터 없이 모든 결과 사용
+    }
+
+    // 전략 4: 다른 정렬 방식 시도 (date, asc, dsc)
+    if (gifts.length < targetCount && sort === "sim") {
+      console.log(`      → 전략 4: 다른 정렬 방식 시도 (date)`);
+      const alternativeSorts = ["date", "asc", "dsc"];
+      for (const altSort of alternativeSorts) {
+        if (gifts.length >= targetCount) break;
+        try {
+          searchResult = await searchNaverShopping(query, Math.min(100, total || 100), altSort);
+          naverItems = searchResult.items || [];
+          gifts = formatNaverResultsAsGifts(naverItems);
+          
+          // 가격 필터 적용
+          if (minPrice !== null || maxPrice !== null) {
+            gifts = gifts.filter((gift) => {
+              const price = gift.metadata.price_num;
+              if (price === null) return false;
+              if (minPrice !== null && price < minPrice) return false;
+              if (maxPrice !== null && price > maxPrice) return false;
+              return true;
+            });
+          }
+          
+          if (gifts.length >= targetCount) {
+            console.log(`         ✅ "${altSort}" 정렬로 ${gifts.length}개 결과 발견`);
+            break;
+          }
+        } catch (error) {
+          console.error(`         ❌ "${altSort}" 정렬 시도 실패:`, error.message);
+        }
+      }
+    }
+  }
+
+  // 결과 개수 제한 (최소 3개 보장)
+  gifts = gifts.slice(0, targetCount);
 
   // Rationale cards 생성 (상세 버전)
   const rationaleCards = gifts.map((gift, idx) => {

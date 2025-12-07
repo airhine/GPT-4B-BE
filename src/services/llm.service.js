@@ -155,9 +155,11 @@ Your goal is to convert raw profiles of people into a standardized, keyword-dens
 [Processing Rules]
 1. **Analyze Content:** Read the input data and identify key characteristics, preferences, or important facts.
 2. **Summarize Memos:**
+   - **Treat 'Memo' and 'Additional Memo' with equal importance.** Both can contain hobbies, interests, preferences, or constraints.
    - Compress the 'Memo' and 'Additional Memo' into concise keywords or short phrases.
    - Remove abstract or filler words (e.g., "I think he likes...", "It seems...").
    - Focus on facts: hobbies, specific constraints, relationships, or strong preferences.
+   - If Memo has "축구" and Additional Memo has "야구", both should be included as separate interests.
 3. **Standardization:**
    - If a field is empty or None, write '정보없음'.
    - Ensure 'Rank' and 'Gender' are standardized (e.g., 'Unknown' -> '정보없음').
@@ -169,7 +171,11 @@ Your goal is to convert raw profiles of people into a standardized, keyword-dens
 3. **Language:** The values must be in **KOREAN**.
 
 [Output Example]
-[상대방] 직급: 부장 | 성별: 남성 | 메모: 골프_매니아, 허리_디스크_있음 | 추가메모: 매운_음식_못먹음, 50대_초반`;
+[상대방] 직급: 부장 | 성별: 남성 | 메모: 골프_매니아, 허리_디스크_있음 | 추가메모: 매운_음식_못먹음, 50대_초반
+
+[Output Example 2]
+Input: Memo: 축구, Additional Memo: 야구
+Output: [상대방] 직급: 정보없음 | 성별: 정보없음 | 메모: 축구 | 추가메모: 야구`;
 
   try {
     const response = await axios.post(
@@ -303,6 +309,43 @@ export const rerankGifts = async (
   }
 
   try {
+    // 모든 선물 후보 로그 출력
+    console.log(`\n   📦 [리랭킹 전] 선물 후보 전체 목록 (총 ${gifts.length}개):`);
+    gifts.forEach((gift, index) => {
+      const metadata = gift.metadata || {};
+      const document = gift.document || "";
+      const name = metadata.name || metadata.product_name || "이름 없음";
+      const category = metadata.category || "카테고리 없음";
+      const price = metadata.price || "가격 정보 없음";
+      const brand = metadata.brand || "브랜드 없음";
+      const event = metadata.event || "";
+      const vibe = metadata.vibe || "";
+      const utility = metadata.utility || "";
+      const source = gift.source || "unknown";
+      const similarity = gift.similarity || "N/A";
+      const description = document || metadata.unified_text || "";
+
+      console.log(`\n   ${index}. [${source}] ${name}`);
+      console.log(`      ID: ${gift.id || "없음"}`);
+      console.log(`      카테고리: ${category}`);
+      console.log(`      가격: ${price}`);
+      console.log(`      브랜드: ${brand}`);
+      if (event) console.log(`      이벤트: ${event}`);
+      if (vibe) console.log(`      감성/분위기: ${vibe}`);
+      if (utility) console.log(`      효용/기능: ${utility}`);
+      if (similarity !== "N/A") console.log(`      유사도: ${similarity}`);
+      if (description) {
+        const descPreview = description.length > 150 
+          ? description.substring(0, 150) + "..." 
+          : description;
+        console.log(`      설명: ${descPreview}`);
+      }
+      if (metadata.url || metadata.link) {
+        console.log(`      URL: ${metadata.url || metadata.link}`);
+      }
+    });
+    console.log(`\n   ========================================\n`);
+
     // Format gifts for LLM with detailed information
     const giftsList = gifts
       .map((gift, index) => {
@@ -359,9 +402,13 @@ ${giftsList}
 5. **품질**: 선물의 품질과 가격 대비 가치
 
 [주의사항]
-- 사용자의 메모나 추가 정보에 명시된 취향, 관심사를 우선적으로 반영하세요
+- **메모와 추가 정보를 동등하게 중요하게 취급하세요.** 둘 다 사용자의 관심사와 취향을 나타냅니다.
+- **중요: 메모와 추가 정보가 둘 다 있고 "정보없음"이 아닌 경우, 각각 최소 1개씩은 반드시 포함해야 합니다.**
+  - 예: 메모에 "축구", 추가 정보에 "야구"가 있으면 → 최소 축구 관련 선물 1개, 야구 관련 선물 1개 포함 필수
+  - 예: 메모에 "골프", 추가 정보에 "허리보호대"가 있으면 → 최소 골프 관련 선물 1개, 허리보호대 관련 선물 1개 포함 필수
+- 사용자의 메모와 추가 정보에 명시된 모든 취향, 관심사를 우선적으로 반영하세요
 - 직급이나 성별에 부적절한 선물은 낮은 순위로 배치하세요
-- 모든 선물이 비슷한 카테고리인 경우, 가장 관련성이 높은 것만 선택하세요
+- 모든 선물이 비슷한 카테고리인 경우, 메모와 추가 정보 모두에 관련성이 높은 선물을 우선 선택하세요
 - 사용자 입력 정보가 없거나 "정보없음"인 경우, 일반적으로 적합한 선물을 선택하세요
 
 [출력 형식]
@@ -370,12 +417,20 @@ ${giftsList}
 정확히 ${topN}개의 인덱스를 반환하세요.
 - 인덱스는 0부터 ${gifts.length - 1} 사이의 정수여야 합니다.
 - 중복된 인덱스는 사용하지 마세요.
+- 같은 상품(이름이 같거나 유사한 상품)은 중복 선택하지 마세요.
 - 반드시 유효한 JSON 배열 형식으로만 반환하세요.
 
-[예시]
+[예시 1]
 사용자 정보: 직급: 부장, 성별: 남성, 메모: 골프_매니아, 추가정보: 허리_디스크_있음
 선물: [0: "골프 클럽", 1: "와인 세트", 2: "골프백", 3: "허리 보호대", 4: "캔들"]
 출력: [0, 2, 3] (골프 클럽, 골프백, 허리 보호대 - 골프 취미와 건강 고려)
+
+[예시 2]
+사용자 정보: 메모: 축구, 추가정보: 야구
+선물: [0: "축구공", 1: "야구장갑", 2: "축구화", 3: "야구배트", 4: "캔들"]
+출력: [0, 1, 2] 또는 [1, 0, 3] (메모와 추가정보 모두 반영하여 축구 관련 선물 최소 1개, 야구 관련 선물 최소 1개 포함 필수)
+  - ✅ 올바른 예: [0, 1, 4] (축구공=메모 관련, 야구장갑=추가정보 관련 포함)
+  - ❌ 잘못된 예: [0, 2, 4] (축구 관련만 있고 야구 관련 없음)
 
 중요: JSON 배열만 반환하세요. 다른 설명이나 텍스트 없이 순수한 JSON 배열만 반환하세요.
 예: [0, 2, 3]`;
@@ -395,7 +450,7 @@ ${giftsList}
             content: prompt,
           },
         ],
-        temperature: 0.2, // 낮춰서 더 일관된 결과
+        temperature: 0.0, // 낮춰서 더 일관된 결과
         max_tokens: 100, // 짧게 제한하여 배열만 반환하도록
       },
       {
@@ -482,8 +537,241 @@ ${giftsList}
         return gifts.slice(0, topN);
       }
 
-      // Return reranked gifts
-      return uniqueIndices.map((idx) => gifts[idx]);
+      // 메모와 추가 메모 키워드가 각각 최소 1개씩 포함되도록 강제 보장
+      const memo = (originalData.memo || "").trim();
+      const addMemo = (originalData.addMemo || "").trim();
+
+      // 메모와 추가 메모가 둘 다 있고 "정보없음"이 아닐 때만 검증
+      if (memo && addMemo && memo !== "정보없음" && addMemo !== "정보없음") {
+        console.log(`   🔍 메모("${memo}")와 추가 메모("${addMemo}") 각각 최소 1개씩 포함 검증 중...`);
+        
+        // 키워드 추출
+        const memoKeywords = memo.split(/[,，\s]+/).map(k => k.trim()).filter(k => k && k.length > 0);
+        const addMemoKeywords = addMemo.split(/[,，\s]+/).map(k => k.trim()).filter(k => k && k.length > 0);
+
+        // 모든 선물을 분석하여 메모/추가메모 관련 여부 분류
+        const memoRelatedGifts = []; // 메모 키워드와 관련된 선물 인덱스
+        const addMemoRelatedGifts = []; // 추가 메모 키워드와 관련된 선물 인덱스
+        const otherGifts = []; // 둘 다 아닌 선물 인덱스
+
+        for (let i = 0; i < gifts.length; i++) {
+          const gift = gifts[i];
+          const metadata = gift.metadata || {};
+          const name = metadata.name || metadata.product_name || "";
+          const category = metadata.category || "";
+          const document = gift.document || metadata.unified_text || "";
+          const searchText = `${name} ${category} ${document}`.toLowerCase();
+
+          // 메모 키워드 확인
+          const isMemoRelated = memoKeywords.some(keyword => 
+            keyword.length > 0 && searchText.includes(keyword.toLowerCase())
+          );
+
+          // 추가 메모 키워드 확인
+          const isAddMemoRelated = addMemoKeywords.some(keyword => 
+            keyword.length > 0 && searchText.includes(keyword.toLowerCase())
+          );
+
+          if (isMemoRelated && isAddMemoRelated) {
+            // 둘 다 관련 있으면 메모 쪽으로 분류 (추가 메모는 별도로 보장)
+            memoRelatedGifts.push(i);
+            addMemoRelatedGifts.push(i);
+          } else if (isMemoRelated) {
+            memoRelatedGifts.push(i);
+          } else if (isAddMemoRelated) {
+            addMemoRelatedGifts.push(i);
+          } else {
+            otherGifts.push(i);
+          }
+        }
+
+        console.log(`   📊 분석 결과: 메모 관련 ${memoRelatedGifts.length}개, 추가 메모 관련 ${addMemoRelatedGifts.length}개, 기타 ${otherGifts.length}개`);
+
+        // 현재 리랭킹된 선물들을 분류
+        const currentMemoCount = uniqueIndices.filter(idx => memoRelatedGifts.includes(idx)).length;
+        const currentAddMemoCount = uniqueIndices.filter(idx => addMemoRelatedGifts.includes(idx)).length;
+
+        console.log(`   📋 현재 리랭킹 결과: 메모 관련 ${currentMemoCount}개, 추가 메모 관련 ${currentAddMemoCount}개`);
+
+        // 재구성: 각각 최소 1개씩 포함되도록 강제
+        const finalIndices = [];
+
+        // 1. 메모 관련 선물이 없으면 추가
+        if (currentMemoCount === 0 && memoRelatedGifts.length > 0) {
+          // 현재 리랭킹 결과에 없는 메모 관련 선물 중 가장 좋은 것을 추가
+          const availableMemoGifts = memoRelatedGifts.filter(idx => !uniqueIndices.includes(idx));
+          if (availableMemoGifts.length > 0) {
+            finalIndices.push(availableMemoGifts[0]);
+            console.log(`   ✅ 메모 관련 선물 추가: 인덱스 ${availableMemoGifts[0]}`);
+          } else {
+            // 이미 포함된 것 중 메모 관련 선물 사용
+            finalIndices.push(memoRelatedGifts[0]);
+            console.log(`   ✅ 메모 관련 선물 사용: 인덱스 ${memoRelatedGifts[0]}`);
+          }
+        }
+
+        // 2. 추가 메모 관련 선물이 없으면 추가
+        if (currentAddMemoCount === 0 && addMemoRelatedGifts.length > 0) {
+          // 현재 리랭킹 결과에 없는 추가 메모 관련 선물 중 가장 좋은 것을 추가
+          const availableAddMemoGifts = addMemoRelatedGifts.filter(idx => 
+            !finalIndices.includes(idx) && !uniqueIndices.includes(idx)
+          );
+          if (availableAddMemoGifts.length > 0) {
+            finalIndices.push(availableAddMemoGifts[0]);
+            console.log(`   ✅ 추가 메모 관련 선물 추가: 인덱스 ${availableAddMemoGifts[0]}`);
+          } else {
+            // 이미 포함된 것 중 추가 메모 관련 선물 사용
+            const existingAddMemoGifts = addMemoRelatedGifts.filter(idx => uniqueIndices.includes(idx));
+            if (existingAddMemoGifts.length > 0) {
+              finalIndices.push(existingAddMemoGifts[0]);
+              console.log(`   ✅ 추가 메모 관련 선물 사용: 인덱스 ${existingAddMemoGifts[0]}`);
+            }
+          }
+        }
+
+        // 3. 나머지는 기존 리랭킹 결과에서 가져오되, 각각 최소 1개씩 포함되도록 조정
+        // 먼저 현재 리랭킹 결과에서 메모/추가메모 각각 최소 1개씩 포함된 것들만 선별
+        const remainingIndices = [];
+        
+        // 메모 관련 선물 중 현재 리랭킹 결과에 포함된 것
+        const rankedMemoGifts = uniqueIndices.filter(idx => 
+          memoRelatedGifts.includes(idx) && !finalIndices.includes(idx)
+        );
+        // 추가 메모 관련 선물 중 현재 리랭킹 결과에 포함된 것 (메모와 중복 제외)
+        const rankedAddMemoGifts = uniqueIndices.filter(idx => 
+          addMemoRelatedGifts.includes(idx) && 
+          !memoRelatedGifts.includes(idx) && 
+          !finalIndices.includes(idx)
+        );
+        // 둘 다 아닌 선물
+        const rankedOtherGifts = uniqueIndices.filter(idx => 
+          !memoRelatedGifts.includes(idx) && 
+          !addMemoRelatedGifts.includes(idx) && 
+          !finalIndices.includes(idx)
+        );
+
+        // 최소 1개씩 포함되도록 추가
+        if (finalIndices.filter(idx => memoRelatedGifts.includes(idx)).length === 0 && rankedMemoGifts.length > 0) {
+          finalIndices.push(rankedMemoGifts[0]);
+        }
+        if (finalIndices.filter(idx => addMemoRelatedGifts.includes(idx)).length === 0 && rankedAddMemoGifts.length > 0) {
+          finalIndices.push(rankedAddMemoGifts[0]);
+        }
+
+        // 나머지 슬롯 채우기 (기존 리랭킹 결과 우선)
+        const remainingSlots = topN - finalIndices.length;
+        const candidates = [
+          ...rankedMemoGifts.slice(1), // 이미 1개 포함했으므로 나머지
+          ...rankedAddMemoGifts.slice(1), // 이미 1개 포함했으므로 나머지
+          ...rankedOtherGifts
+        ].filter(idx => !finalIndices.includes(idx));
+
+        finalIndices.push(...candidates.slice(0, remainingSlots));
+
+        console.log(`   ✅ 최종 재구성: ${finalIndices.length}개 (메모 관련: ${finalIndices.filter(idx => memoRelatedGifts.includes(idx)).length}개, 추가 메모 관련: ${finalIndices.filter(idx => addMemoRelatedGifts.includes(idx)).length}개)`);
+
+        // 상품 ID 및 이름 기준 중복 제거 (같은 상품이 2개 이상 선택되지 않도록)
+        const finalGifts = [];
+        const seenProductIds = new Set();
+        const seenProductNames = new Set();
+        const duplicateProductIds = [];
+        const duplicateProductNames = [];
+
+        for (const idx of finalIndices.slice(0, topN)) {
+          const gift = gifts[idx];
+          const productId = gift.id || gift.metadata?.productId || gift.metadata?.id;
+          const productName = (gift.metadata?.name || gift.metadata?.product_name || gift.name || "").trim().toLowerCase();
+          
+          let isDuplicate = false;
+          
+          // 상품 ID로 중복 체크
+          if (productId) {
+            if (seenProductIds.has(productId)) {
+              duplicateProductIds.push({ idx, productId, name: gift.metadata?.name || gift.name || "이름 없음" });
+              isDuplicate = true;
+            } else {
+              seenProductIds.add(productId);
+            }
+          }
+          
+          // 상품 이름으로 중복 체크 (ID가 없거나 ID로 체크되지 않은 경우)
+          if (!isDuplicate && productName) {
+            if (seenProductNames.has(productName)) {
+              duplicateProductNames.push({ idx, name: gift.metadata?.name || gift.name || "이름 없음" });
+              isDuplicate = true;
+            } else {
+              seenProductNames.add(productName);
+            }
+          }
+          
+          if (!isDuplicate) {
+            finalGifts.push(gift);
+          }
+        }
+
+        if (duplicateProductIds.length > 0 || duplicateProductNames.length > 0) {
+          console.log(`   ⚠️  중복된 상품 제거:`);
+          duplicateProductIds.forEach(dup => {
+            console.log(`      - 인덱스 ${dup.idx}: ${dup.name} (ID 중복: ${dup.productId})`);
+          });
+          duplicateProductNames.forEach(dup => {
+            console.log(`      - 인덱스 ${dup.idx}: ${dup.name} (이름 중복)`);
+          });
+        }
+
+        return finalGifts;
+      }
+
+      // 상품 ID 및 이름 기준 중복 제거 (같은 상품이 2개 이상 선택되지 않도록)
+      const finalGifts = [];
+      const seenProductIds = new Set();
+      const seenProductNames = new Set();
+      const duplicateProductIds = [];
+      const duplicateProductNames = [];
+
+      for (const idx of uniqueIndices) {
+        const gift = gifts[idx];
+        const productId = gift.id || gift.metadata?.productId || gift.metadata?.id;
+        const productName = (gift.metadata?.name || gift.metadata?.product_name || gift.name || "").trim().toLowerCase();
+        
+        let isDuplicate = false;
+        
+        // 상품 ID로 중복 체크
+        if (productId) {
+          if (seenProductIds.has(productId)) {
+            duplicateProductIds.push({ idx, productId, name: gift.metadata?.name || gift.name || "이름 없음" });
+            isDuplicate = true;
+          } else {
+            seenProductIds.add(productId);
+          }
+        }
+        
+        // 상품 이름으로 중복 체크 (ID가 없거나 ID로 체크되지 않은 경우)
+        if (!isDuplicate && productName) {
+          if (seenProductNames.has(productName)) {
+            duplicateProductNames.push({ idx, name: gift.metadata?.name || gift.name || "이름 없음" });
+            isDuplicate = true;
+          } else {
+            seenProductNames.add(productName);
+          }
+        }
+        
+        if (!isDuplicate) {
+          finalGifts.push(gift);
+        }
+      }
+
+      if (duplicateProductIds.length > 0 || duplicateProductNames.length > 0) {
+        console.log(`   ⚠️  중복된 상품 제거:`);
+        duplicateProductIds.forEach(dup => {
+          console.log(`      - 인덱스 ${dup.idx}: ${dup.name} (ID 중복: ${dup.productId})`);
+        });
+        duplicateProductNames.forEach(dup => {
+          console.log(`      - 인덱스 ${dup.idx}: ${dup.name} (이름 중복)`);
+        });
+      }
+
+      return finalGifts;
     }
 
     throw new Error("OpenAI API returned no choices");
@@ -550,6 +838,8 @@ ${document.substring(0, 500)}${document.length > 500 ? "..." : ""}
 위 정보를 종합하여 다음을 생성하세요:
 1. **제목 (title)**: 사용자의 특성, 관심사, 상황을 나타내는 짧은 키워드 (예: "와인 애호가", "스포츠 매니아", "비즈니스 선물", "특별한 날" 등)
 2. **설명 (description)**: 왜 이 선물이 추천되었는지에 대한 자연스러운 설명 (1-2문장)
+   - **중요**: "~~에게", "~~님에게", "~~을/를 좋아하는 ~~에게" 같은 사용자 지칭 표현을 사용하지 마세요.
+   - 선물의 특징, 장점, 적합한 이유만 직접적으로 설명하세요.
 
 [출력 형식]
 JSON 형식으로 반환하세요:
@@ -562,8 +852,9 @@ JSON 형식으로 반환하세요:
 입력: 직급 부장, 성별 남성, 메모 골프_매니아, 선물 골프 클럽
 출력: {
   "title": "골프 애호가",
-  "description": "평소 골프에 관심이 많으시며, 최신 기술이 적용된 골프 클럽으로 실력을 향상시킬 수 있습니다."
+  "description": "최신 기술이 적용된 골프 클럽으로 실력을 향상시킬 수 있습니다."
 }
+❌ 잘못된 예: "골프를 좋아하는 분에게 최신 기술이 적용된 골프 클럽으로 실력을 향상시킬 수 있습니다."
 
 [예시 2]
 입력: 추가정보 생일, 선물 프리미엄 와인 세트
@@ -571,13 +862,15 @@ JSON 형식으로 반환하세요:
   "title": "특별한 날",
   "description": "생일을 맞이하여 프리미엄 와인 세트가 적합합니다."
 }
+❌ 잘못된 예: "생일을 맞이하는 분에게 프리미엄 와인 세트가 적합합니다."
 
 [예시 3]
 입력: 직급 부장, 선물 고급 명함지갑
 출력: {
   "title": "비즈니스 선물",
-  "description": "거래처 관계자로 고급스러운 선물이 필요합니다."
+  "description": "고급스러운 비즈니스 선물로 업무에 유용합니다."
 }
+❌ 잘못된 예: "데이터 엔지니어에게 고급스러운 비즈니스 선물로 업무에 유용합니다."
 
 JSON만 반환하세요, 다른 텍스트 없이:`;
 
@@ -684,20 +977,29 @@ export const extractSearchKeywords = async (personaData, userQuery = "") => {
 - 추가 정보 (상황/제약조건): ${addMemo || "정보없음"}
 
 [키워드 추출 규칙]
-1. 메모와 추가 정보에서 **구체적인 관심사, 취미, 상황**을 추출하세요.
-2. 추상적인 표현은 구체적인 상품 키워드로 변환하세요.
+1. **메모와 추가 정보를 동등하게 중요하게 취급하세요.** 둘 다 관심사, 취미, 선호도를 포함할 수 있습니다.
+2. 메모와 추가 정보에서 **모든 구체적인 관심사, 취미, 상황**을 추출하세요.
+   - 예: 메모에 "축구"가 있고 추가 정보에 "야구"가 있다면 → ["축구 선물", "야구 선물"] 같이 둘 다 포함
+3. 추상적인 표현은 구체적인 상품 키워드로 변환하세요.
    - "골프를 좋아함" → "골프용품", "골프공", "골프장갑"
    - "와인을 즐김" → "와인세트", "와인잔", "와인오프너"
    - "건강이 안 좋음" → "건강식품", "영양제"
-3. 직급과 성별을 고려하여 적절한 선물 카테고리를 추가하세요.
+4. 직급과 성별을 고려하여 적절한 선물 카테고리를 추가하세요.
    - 임원급 + 남성 → "고급 선물", "비즈니스 선물"
    - 여성 → "뷰티", "향수" 등 고려
-4. 상황(생일, 승진, 감사 등)에 맞는 키워드도 추가하세요.
-5. 키워드는 네이버 쇼핑에서 실제로 검색했을 때 좋은 결과가 나오는 형태로 작성하세요.
+5. 상황(생일, 승진, 감사 등)에 맞는 키워드도 추가하세요.
+6. 키워드는 네이버 쇼핑에서 실제로 검색했을 때 좋은 결과가 나오는 형태로 작성하세요.
 
 [출력 형식]
-JSON 배열로 3-5개의 검색 키워드를 반환하세요.
-예시: ["골프용품 선물", "프리미엄 와인세트", "건강식품"]
+JSON 배열로 **최대 3개의 핵심 검색 키워드만** 반환하세요.
+- 메모와 추가 정보에서 가장 중요한 키워드 1-2개만 추출
+- 각 관심사마다 하나의 핵워드만 생성 (예: "축구", "야구" 등)
+- 최대 3개를 넘지 마세요
+
+예시:
+- 메모 "축구", 추가정보 "야구" → ["축구 선물", "야구 선물"]
+- 메모 "골프", 추가정보 "허리보호대" → ["골프 선물", "허리보호대"]
+- 메모 "와인", 추가정보 "생일" → ["와인 선물", "생일 선물"]
 
 중요: JSON 배열만 반환하세요. 다른 설명 없이 순수한 JSON 배열만 반환하세요.`;
 
@@ -791,8 +1093,9 @@ const extractKeywordsFallback = (personaData, userQuery = "") => {
     }
   }
 
-  // 추가 정보에서 상황 키워드 추출
+  // 추가 정보에서 키워드 추출 (메모와 동일하게 처리)
   if (addMemo && addMemo.trim()) {
+    // 먼저 특정 상황 키워드 확인
     const occasions = ["생일", "승진", "감사", "결혼", "출산", "졸업", "취업"];
     for (const occasion of occasions) {
       if (addMemo.includes(occasion)) {
