@@ -2,26 +2,26 @@ name: Deploy Backend to AWS
 
 on:
   push:
-    branches: [peter]
-  workflow_dispatch:  # 수동 실행 가능
+    branches: [main]
+  workflow_dispatch: # 수동 실행 가능
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
-      
+          node-version: "18"
+          cache: "npm"
+
       - name: Install dependencies
         run: npm ci
-      
+
       - name: Create deployment package
         run: |
           zip -r deploy.zip . \
@@ -31,7 +31,7 @@ jobs:
             -x ".env" \
             -x "*.md" \
             -x "tests/*"
-      
+
       - name: Deploy to Elastic Beanstalk
         uses: einaregilsson/beanstalk-deploy@v22
         with:
@@ -43,4 +43,3 @@ jobs:
           version_label: ${{ github.sha }}-${{ github.run_number }}
           deployment_package: deploy.zip
           wait_for_environment_recovery: 120
-
