@@ -102,10 +102,10 @@ PORT=3000
 NODE_ENV=development
 
 # MySQL 데이터베이스 설정
-DB_HOST=127.0.0.1
-DB_USER=root
-DB_PASSWORD=peter0524!
-DB_NAME=backendTest
+DB_HOST=database-1.c7gaw6asmxbo.ap-northeast-2.rds.amazonaws.com
+DB_USER=admin
+DB_PASSWORD=Peter0524!
+DB_NAME=HCI_2025
 DB_PORT=3306
 
 # JWT

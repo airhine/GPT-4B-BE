@@ -12,6 +12,7 @@ import giftRoutes from "./routes/gift.routes.js";
 import calendarRoutes from "./routes/calendar.routes.js";
 import chatRoutes from "./routes/chat.routes.js";
 import userRoutes from "./routes/user.routes.js";
+import memoRoutes from "./routes/memo.routes.js";
 
 // Middleware
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -72,6 +73,7 @@ app.use("/api/gifts", giftRoutes);
 app.use("/api/calendar", calendarRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/memo", memoRoutes);
 
 // Error handling
 app.use(notFound);
