@@ -2,16 +2,26 @@ import express from "express";
 import { body, query, validationResult } from "express-validator";
 import Gift from "../models/Gift.model.js";
 import BusinessCard from "../models/BusinessCard.model.js";
+import Memo from "../models/Memo.model.js";
 import { authenticate } from "../middleware/auth.middleware.js";
 import {
   processPersonaEmbedding,
   generateEmbedding,
-  rerankGifts,
-  generateGiftRationale,
   extractSearchKeywords,
 } from "../services/llm.service.js";
 import { searchSimilarGifts } from "../services/chromadb.service.js";
 import { getNaverGiftRecommendations } from "../services/naver.service.js";
+import {
+  fetchPreferenceProfile,
+  performRerankingAndGenerateRationale,
+  convertPriceToWon,
+  normalizeGiftResponse,
+  removeDuplicateGifts,
+  checkPreferencePriority,
+} from "../services/gift.service.js";
+import { GIFT_CONFIG } from "../config/gift.config.js";
+import { logger } from "../utils/logger.js";
+import { generateCacheKey, getCache, setCache } from "../utils/cache.js";
 
 const router = express.Router();
 
@@ -88,6 +98,7 @@ router.post(
   "/search",
   [
     body("query").notEmpty().withMessage("검색어(query)를 입력해주세요."),
+    body("cardId").optional().trim(),
     body("rank").optional().trim(),
     body("gender").optional().trim(),
     body("memo").optional().trim(),
@@ -108,6 +119,7 @@ router.post(
 
       const {
         query: searchQuery,
+        cardId = null,
         rank = "",
         gender = "",
         memo = "",
@@ -152,18 +164,37 @@ router.post(
       const minPriceWon = minPrice ? parseFloat(minPrice) * 10000 : null;
       const maxPriceWon = maxPrice ? parseFloat(maxPrice) * 10000 : null;
 
-      // ========================================
-      // Step 1: 페르소나 문자열 생성
-      // ========================================
-      const step1StartTime = Date.now();
-      console.log("\n[Step 1] 페르소나 문자열 생성 시작...");
-      let personaString;
+      // 페르소나 데이터 준비
       const personaData = {
         rank: rank || searchQuery,
         gender,
         memo: memo || searchQuery,
         addMemo,
       };
+
+      // ========================================
+      // Step 0: 캐시 확인
+      // ========================================
+      const cacheKey = generateCacheKey(personaData, minPrice, maxPrice);
+      if (GIFT_CONFIG.CACHE_ENABLED) {
+        const cachedResult = await getCache(cacheKey);
+        if (cachedResult) {
+          logger.gift.info(`캐시 히트: ${cacheKey}`);
+          return res.json({
+            success: true,
+            data: cachedResult.data,
+            cached: true,
+          });
+        }
+        logger.gift.debug(`캐시 미스: ${cacheKey}`);
+      }
+
+      // ========================================
+      // Step 1: 페르소나 문자열 생성
+      // ========================================
+      const step1StartTime = Date.now();
+      console.log("\n[Step 1] 페르소나 문자열 생성 시작...");
+      let personaString;
       console.log(`   입력 데이터:`, JSON.stringify(personaData, null, 2));
 
       try {
@@ -197,11 +228,7 @@ router.post(
         console.log("   → 임베딩 벡터 생성 중...");
         console.log(`   모델: text-embedding-3-small, 차원: 1536`);
         const embeddingStartTime = Date.now();
-        const embeddingVector = await generateEmbedding(
-          personaString,
-          "text-embedding-3-small",
-          1536
-        );
+        const embeddingVector = await generateEmbedding(personaString);
         const embeddingTime = Date.now() - embeddingStartTime;
         console.log(
           `   ✅ 임베딩 벡터 생성 완료 (차원: ${embeddingVector.length}, 소요: ${embeddingTime}ms)`
@@ -625,18 +652,30 @@ router.post(
       }
 
       // ========================================
-      // Step 4: 결과 통합 및 리랭킹
+      // Step 4: 결과 통합 및 중복 제거
       // ========================================
       const step4StartTime = Date.now();
-      console.log("\n[Step 4] 결과 통합 및 리랭킹 시작...");
-      const allGifts = [
+      console.log("\n[Step 4] 결과 통합 및 중복 제거 시작...");
+      const allGiftsRaw = [
         ...searchResults.chromaDB.gifts,
         ...searchResults.naver.gifts,
       ];
       console.log(
-        `   → 통합 결과: ChromaDB ${searchResults.chromaDB.count}개 + 네이버 ${searchResults.naver.count}개 = 총 ${allGifts.length}개`
+        `   → 통합 전: ChromaDB ${searchResults.chromaDB.count}개 + 네이버 ${searchResults.naver.count}개 = 총 ${allGiftsRaw.length}개`
       );
-      console.log(`\n   📋 통합 전 전체 선물 목록 (총 ${allGifts.length}개):`);
+
+      // 검색 단계에서 중복 제거 (ID 및 이름 기준)
+      logger.gift.step("중복 제거", `검색 결과 중복 제거 중... (${allGiftsRaw.length}개)`);
+      const { uniqueGifts: allGifts, duplicates } = removeDuplicateGifts(allGiftsRaw);
+      if (duplicates.length > 0) {
+        logger.gift.info(`중복 제거 완료: ${duplicates.length}개 제거, ${allGifts.length}개 남음`);
+      } else {
+        logger.gift.info(`중복 없음: ${allGifts.length}개 유지`);
+      }
+      console.log(
+        `   → 통합 후 (중복 제거): ${allGifts.length}개 (제거: ${duplicates.length}개)`
+      );
+      console.log(`\n   📋 통합 후 전체 선물 목록 (총 ${allGifts.length}개):`);
       allGifts.forEach((gift, idx) => {
         const metadata = gift.metadata || {};
         const name =
@@ -664,104 +703,25 @@ router.post(
         }
       });
 
-      let recommendedGifts = allGifts;
-      let rationaleCards = [];
+      // 프로필 데이터 조회
+      const preferenceProfile = await fetchPreferenceProfile(cardId);
+      
+      // Preference Profile 우선순위 확인 및 로깅
+      const priorityInfo = checkPreferencePriority(preferenceProfile, {
+        memo: personaData.memo,
+        addMemo: personaData.addMemo,
+      });
+      logger.gift.debug("Preference Profile 우선순위", priorityInfo);
 
-      // 결과가 3개 초과일 경우 LLM 리랭킹 수행
-      if (allGifts.length > 3) {
-        try {
-          console.log(
-            `\n   → LLM 리랭킹 수행 중... (${allGifts.length}개 → 3개)`
-          );
-          console.log(`      입력: ${allGifts.length}개 선물, 페르소나 데이터`);
-          const rerankStartTime = Date.now();
-          const beforeRerank = allGifts.map((g) => ({
-            id: g.id,
-            name: g.metadata?.name || g.name,
-            source: g.source,
-          }));
-          recommendedGifts = await rerankGifts(
-            allGifts,
-            personaString,
-            personaData,
-            3
-          );
-          const rerankTime = Date.now() - rerankStartTime;
-          console.log(
-            `      ✅ 리랭킹 완료: 상위 3개 선정 (소요: ${rerankTime}ms)`
-          );
-          console.log(`\n   📋 리랭킹 결과:`);
-          recommendedGifts.forEach((gift, idx) => {
-            console.log(
-              `   ${idx + 1}. [${gift.source || "unknown"}] ${
-                gift.metadata?.name || gift.name || gift.id
-              }`
-            );
-            console.log(
-              `      가격: ${
-                gift.metadata?.price || gift.price || "가격 정보 없음"
-              }`
-            );
-            if (gift.similarity) {
-              console.log(`      유사도: ${gift.similarity}`);
-            }
-          });
-
-          // 추천 이유 생성
-          console.log(`\n   → 추천 이유 생성 중...`);
-          const rationaleStartTime = Date.now();
-          rationaleCards = await Promise.all(
-            recommendedGifts.map(async (gift, idx) => {
-              try {
-                const rationale = await generateGiftRationale(
-                  gift,
-                  personaString,
-                  personaData
-                );
-                return {
-                  id: idx + 1,
-                  title: rationale.title,
-                  description: rationale.description,
-                };
-              } catch (error) {
-                const meta = gift.metadata || {};
-                return {
-                  id: idx + 1,
-                  title: meta.category?.split(" > ")[0] || "추천 선물",
-                  description: `"${searchQuery}" 검색 결과로 추천드립니다.`,
-                };
-              }
-            })
-          );
-          const rationaleTime = Date.now() - rationaleStartTime;
-          console.log(
-            `      ✅ 추천 이유 생성 완료: ${rationaleCards.length}개 (소요: ${rationaleTime}ms)`
-          );
-          rationaleCards.forEach((card, idx) => {
-            console.log(`      ${idx + 1}. ${card.title}`);
-            console.log(`         ${card.description.substring(0, 100)}...`);
-          });
-        } catch (error) {
-          // 리랭킹 실패 시 상위 3개 사용
-          console.error(
-            `      ⚠️  리랭킹 실패, 상위 3개 사용 (에러: ${error.message})`
-          );
-          recommendedGifts = allGifts.slice(0, 3);
-          rationaleCards = recommendedGifts.map((gift, idx) => ({
-            id: idx + 1,
-            title: gift.metadata?.category?.split(" > ")[0] || "추천 선물",
-            description: `"${searchQuery}" 검색 결과로 추천드립니다.`,
-          }));
-        }
-      } else {
-        // 결과가 3개 이하면 그대로 사용
-        console.log(`   → 결과가 ${allGifts.length}개 (3개 이하), 리랭킹 생략`);
-        rationaleCards = recommendedGifts.map((gift, idx) => ({
-          id: idx + 1,
-          title: gift.metadata?.category?.split(" > ")[0] || "추천 선물",
-          description: `"${searchQuery}" 검색 결과로 추천드립니다.`,
-        }));
-      }
+      // 리랭킹 및 추천 이유 생성
+      const { recommendedGifts, rationaleCards } = await performRerankingAndGenerateRationale(
+        allGifts,
+        personaString,
+        personaData,
+        preferenceProfile,
+        GIFT_CONFIG.DEFAULT_TOP_N,
+        searchQuery
+      );
       const step4Time = Date.now() - step4StartTime;
       console.log(`\n   Step 4 총 소요 시간: ${step4Time}ms`);
 
@@ -815,24 +775,25 @@ router.post(
         }
       });
       console.log("\n==========================================\n");
-      res.json({
+      
+      // 최종 결과 준비
+      const result = {
         success: true,
         data: {
           query: searchQuery,
           personaString,
-          recommendedGifts: recommendedGifts.map((gift) => ({
-            id: gift.id,
-            name: gift.metadata?.name || gift.metadata?.product_name || "",
-            price: gift.metadata?.price || "",
-            image: gift.metadata?.image || "",
-            url: gift.metadata?.url || gift.metadata?.link || "",
-            category: gift.metadata?.category || "",
-            brand: gift.metadata?.brand || "",
-            source: gift.source || "unknown",
-          })),
+          recommendedGifts: normalizeGiftResponse(recommendedGifts),
           rationaleCards,
         },
-      });
+      };
+
+      // 캐시 저장 (캐시가 활성화된 경우)
+      if (GIFT_CONFIG.CACHE_ENABLED) {
+        await setCache(cacheKey, result, GIFT_CONFIG.CACHE_TTL_SECONDS);
+        logger.gift.debug(`캐시 저장: ${cacheKey} (TTL: ${GIFT_CONFIG.CACHE_TTL_SECONDS}s)`);
+      }
+
+      res.json(result);
     } catch (error) {
       console.error("\n==========================================");
       console.error("❌ [선물 검색] 오류 발생");
@@ -908,7 +869,7 @@ router.post(
       }
       console.log(`🛒 네이버 검색 포함: ${includeNaver ? "예" : "아니오"}`);
       console.log(`📝 추가 정보: ${additionalInfo || "없음"}`);
-      console.log(`📝 메모: ${memos.length > 0 ? memos.join(", ") : "없음"}`);
+      console.log(`📝 요청 본문의 메모: ${memos.length > 0 ? memos.join(", ") : "없음"} (DB에서 조회한 메모 사용)`);
       console.log(`🕐 요청 시간: ${new Date().toISOString()}`);
 
       // 명함 정보 조회
@@ -925,11 +886,31 @@ router.post(
         `✅ 명함 조회 완료: ${card.name} (${card.position} @ ${card.company})`
       );
 
+      // DB에서 명함별 메모 조회
+      console.log("\n[메모 조회] DB에서 명함별 메모 조회 중...");
+      let dbMemos = [];
+      try {
+        dbMemos = await Memo.findByBusinessCardId(cardId, req.user.id);
+        console.log(`✅ 메모 조회 완료: ${dbMemos.length}개`);
+        if (dbMemos.length > 0) {
+          console.log(`   메모 목록:`);
+          dbMemos.forEach((memo, idx) => {
+            console.log(`      ${idx + 1}. ${memo.content.substring(0, 50)}${memo.content.length > 50 ? "..." : ""}`);
+          });
+        }
+      } catch (memoError) {
+        console.error("⚠️  메모 조회 실패:", memoError.message);
+        // 메모 조회 실패해도 계속 진행 (빈 배열 사용)
+      }
+
       // 페르소나 데이터 준비
       const finalGender = card.gender || gender || "";
       const rank = card.position || "";
-      // X 버튼으로 삭제된 메모는 포함하지 않음 (명함의 원본 memo 사용 안 함)
-      const primaryMemo = memos.length > 0 ? memos[0] : "";
+      // DB에서 조회한 메모들의 content를 합쳐서 사용
+      // 요청 본문의 memos는 무시하고 DB에서 조회한 메모만 사용
+      const primaryMemo = dbMemos.length > 0 
+        ? dbMemos.map((memo) => memo.content).join(", ") 
+        : "";
       const addMemo = additionalInfo || "";
 
       const personaData = {
@@ -947,8 +928,8 @@ router.post(
       };
 
       // 가격 필터 변환
-      const minPriceWon = minPrice ? parseFloat(minPrice) * 10000 : null;
-      const maxPriceWon = maxPrice ? parseFloat(maxPrice) * 10000 : null;
+      const minPriceWon = convertPriceToWon(minPrice);
+      const maxPriceWon = convertPriceToWon(maxPrice);
 
       // Step 1: 페르소나 문자열 생성
       console.log("\n[Step 1] 페르소나 문자열 생성 시작...");
@@ -971,11 +952,7 @@ router.post(
       console.log("\n[Step 2] ChromaDB 벡터 검색 시작...");
       try {
         console.log("   → 임베딩 벡터 생성 중...");
-        const embeddingVector = await generateEmbedding(
-          personaString,
-          "text-embedding-3-small",
-          1536
-        );
+        const embeddingVector = await generateEmbedding(personaString);
         console.log(
           `   ✅ 임베딩 벡터 생성 완료 (차원: ${embeddingVector.length})`
         );
@@ -1262,63 +1239,48 @@ router.post(
         console.log("\n[Step 3] 네이버 검색 건너뜀 (includeNaver=false)");
       }
 
-      // Step 4: 결과 통합 및 리랭킹
-      console.log("\n[Step 4] 결과 통합 및 리랭킹 시작...");
-      const allGifts = [
+      // Step 4: 결과 통합 및 중복 제거
+      console.log("\n[Step 4] 결과 통합 및 중복 제거 시작...");
+      const allGiftsRaw = [
         ...(searchResults.chromaDB.gifts || []),
         ...(searchResults.naver.gifts || []),
       ];
       console.log(
-        `   → 통합 결과: ChromaDB ${searchResults.chromaDB.count}개 + 네이버 ${searchResults.naver.count}개 = 총 ${allGifts.length}개`
+        `   → 통합 전: ChromaDB ${searchResults.chromaDB.count}개 + 네이버 ${searchResults.naver.count}개 = 총 ${allGiftsRaw.length}개`
       );
 
-      let recommendedGifts = allGifts.slice(0, 3);
-      let rationaleCards = [];
-
-      if (allGifts.length > 3) {
-        try {
-          console.log("   → LLM 리랭킹 수행 중...");
-          recommendedGifts = await rerankGifts(
-            allGifts,
-            personaString,
-            personaData,
-            3
-          );
-          console.log(`   ✅ 리랭킹 완료: 상위 3개 선정`);
-        } catch (error) {
-          console.error("   ⚠️  리랭킹 실패, 상위 3개 사용:", error.message);
-          recommendedGifts = allGifts.slice(0, 3);
-        }
+      // 검색 단계에서 중복 제거 (ID 및 이름 기준)
+      logger.gift.step("중복 제거", `검색 결과 중복 제거 중... (${allGiftsRaw.length}개)`);
+      const { uniqueGifts: allGifts, duplicates } = removeDuplicateGifts(allGiftsRaw);
+      if (duplicates.length > 0) {
+        logger.gift.info(`중복 제거 완료: ${duplicates.length}개 제거, ${allGifts.length}개 남음`);
       } else {
-        console.log("   → 결과가 3개 이하, 리랭킹 생략");
+        logger.gift.info(`중복 없음: ${allGifts.length}개 유지`);
       }
-
-      // 추천 이유 생성
-      console.log("   → 추천 이유 생성 중...");
-      rationaleCards = await Promise.all(
-        recommendedGifts.map(async (gift, idx) => {
-          try {
-            const rationale = await generateGiftRationale(
-              gift,
-              personaString,
-              personaData
-            );
-            return {
-              id: idx + 1,
-              title: rationale.title,
-              description: rationale.description,
-            };
-          } catch {
-            const meta = gift.metadata || {};
-            return {
-              id: idx + 1,
-              title: meta.category?.split(" > ")[0] || "추천 선물",
-              description: `${card.name || "상대방"}님에게 적합한 선물입니다.`,
-            };
-          }
-        })
+      console.log(
+        `   → 통합 후 (중복 제거): ${allGifts.length}개 (제거: ${duplicates.length}개)`
       );
-      console.log(`   ✅ 추천 이유 생성 완료: ${rationaleCards.length}개`);
+
+      // 프로필 데이터 조회
+      const preferenceProfile = await fetchPreferenceProfile(cardId);
+      
+      // Preference Profile 우선순위 확인 및 로깅
+      const priorityInfo = checkPreferencePriority(preferenceProfile, {
+        memo: personaData.memo,
+        addMemo: personaData.addMemo,
+      });
+      logger.gift.debug("Preference Profile 우선순위", priorityInfo);
+
+      // 리랭킹 및 추천 이유 생성
+      const { recommendedGifts, rationaleCards } = await performRerankingAndGenerateRationale(
+        allGifts,
+        personaString,
+        personaData,
+        preferenceProfile,
+        GIFT_CONFIG.DEFAULT_TOP_N,
+        "",
+        `${card.name || "상대방"}님에게 적합한 선물입니다.`
+      );
 
       console.log("\n==========================================");
       console.log("✅ [명함 기반 선물 추천] 완료");
@@ -1336,16 +1298,7 @@ router.post(
             company: card.company,
             gender: card.gender,
           },
-          recommendedGifts: recommendedGifts.map((gift) => ({
-            id: gift.id,
-            name: gift.metadata?.name || gift.metadata?.product_name || "",
-            price: gift.metadata?.price || "",
-            image: gift.metadata?.image || "",
-            url: gift.metadata?.url || gift.metadata?.link || "",
-            category: gift.metadata?.category || "",
-            brand: gift.metadata?.brand || "",
-            source: gift.source || "unknown",
-          })),
+          recommendedGifts: normalizeGiftResponse(recommendedGifts),
           rationaleCards,
         },
       });

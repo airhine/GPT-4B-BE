@@ -1,4 +1,6 @@
 import axios from "axios";
+import { GIFT_CONFIG } from "../config/gift.config.js";
+import { logger } from "../utils/logger.js";
 
 /**
  * Process chat message with LLM
@@ -49,7 +51,7 @@ const processWithGPT = async (messages) => {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4o-mini",
+        model: GIFT_CONFIG.LLM_CHAT_MODEL,
         messages: formattedMessages,
         temperature: 0.7,
       },
@@ -58,6 +60,7 @@ const processWithGPT = async (messages) => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
+        timeout: GIFT_CONFIG.LLM_TIMEOUT_MS,
       }
     );
 
@@ -187,7 +190,7 @@ export const processPersonaEmbedding = async (personaData) => {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4o-mini",
+        model: GIFT_CONFIG.LLM_CHAT_MODEL,
         messages: [
           {
             role: "system",
@@ -207,6 +210,7 @@ export const processPersonaEmbedding = async (personaData) => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
+        timeout: GIFT_CONFIG.LLM_TIMEOUT_MS,
       }
     );
 
@@ -240,8 +244,8 @@ export const processPersonaEmbedding = async (personaData) => {
  */
 export const generateEmbedding = async (
   text,
-  model = "text-embedding-3-small",
-  dimensions = 1536
+  model = GIFT_CONFIG.LLM_EMBEDDING_MODEL,
+  dimensions = GIFT_CONFIG.LLM_EMBEDDING_DIMENSIONS
 ) => {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is not configured");
@@ -264,6 +268,7 @@ export const generateEmbedding = async (
           "Content-Type": "application/json",
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
+        timeout: GIFT_CONFIG.LLM_TIMEOUT_MS,
       }
     );
 
@@ -293,13 +298,15 @@ export const generateEmbedding = async (
  * @param {string} personaString - Persona string for context
  * @param {Object} originalData - Original user input data (rank, gender, memo, addMemo)
  * @param {number} topN - Number of top gifts to return (default: 3)
+ * @param {Object} preferenceProfile - Preference profile data from memos (likes, dislikes, uncertain)
  * @returns {Promise<Array>} Reranked top N gifts
  */
 export const rerankGifts = async (
   gifts,
   personaString,
   originalData = {},
-  topN = 3
+  topN = 3,
+  preferenceProfile = null
 ) => {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is not configured");
@@ -377,8 +384,8 @@ export const rerankGifts = async (
 - 이벤트: ${event || "없음"}
 - 감성/분위기: ${vibe || "없음"}
 - 효용/기능: ${utility || "없음"}
-- 상세 설명: ${description.substring(0, 200)}${
-          description.length > 200 ? "..." : ""
+- 상세 설명: ${description.substring(0, GIFT_CONFIG.RERANK_DESCRIPTION_MAX_LENGTH)}${
+          description.length > GIFT_CONFIG.RERANK_DESCRIPTION_MAX_LENGTH ? "..." : ""
         }`;
       })
       .join("\n\n");
@@ -390,30 +397,96 @@ export const rerankGifts = async (
 - 메모: ${originalData.memo || "정보없음"}
 - 추가 정보: ${originalData.addMemo || "정보없음"}`;
 
+    // 프로필 데이터 포맷팅
+    const formatPreferences = (prefs, type) => {
+      if (!prefs || !Array.isArray(prefs) || prefs.length === 0) {
+        return '정보 없음';
+      }
+      return prefs.map((item, idx) => {
+        const evidence = Array.isArray(item.evidence) 
+          ? item.evidence.join(', ') 
+          : (item.evidence || '없음');
+        const weight = item.weight ? (item.weight * 100).toFixed(0) : '50';
+        return `${idx + 1}. ${item.item} (신뢰도: ${weight}%)\n   - 근거: ${evidence}`;
+      }).join('\n');
+    };
+
+    const profileSection = preferenceProfile ? `
+[선호도 프로필 데이터 (메모 기반 추출)]
+**좋아하는 것 (Likes):**
+${formatPreferences(preferenceProfile.likes, 'likes')}
+
+**싫어하는 것 (Dislikes):**
+${formatPreferences(preferenceProfile.dislikes, 'dislikes')}
+
+**불확실한 선호도 (Uncertain):**
+${formatPreferences(preferenceProfile.uncertain, 'uncertain')}
+` : '';
+
     const prompt = `[Role]
 당신은 비즈니스 상황에서 거래처, 동료, 상사 등에게 줄 선물을 추천하는 전문가입니다.
-사용자의 선호도와 상황을 정확히 분석하여 비즈니스 관계에 가장 적합한 선물을 추천하세요.
+메모에서 추출된 선호도 프로필 데이터를 기반으로 사용자의 취향과 선호도를 정확히 분석하여 비즈니스 관계에 가장 적합한 선물을 추천하세요.
 
-[사용자 정보]
+[사용자 기본 정보]
 ${userInputInfo}
 
 [Persona 요약]
 ${personaString}
-
+${profileSection}
 [후보 선물 목록]
 ${giftsList}
 
-[분석 기준]
-다음 기준을 종합적으로 고려하여 선물을 재정렬하세요:
-1. **관련성**: 사용자의 직급, 성별, 메모, 추가 정보와의 직접적인 관련성
-2. **적합성**: 사용자의 관심사, 취향, 상황에 맞는지 여부
-3. **비즈니스 적절성**: 업무 관계에서 주고받기에 적합하고 예의를 갖춘 선물인지
-4. **실용성**: 실제로 사용할 수 있고 가치 있는 선물인지
-5. **다양성**: 너무 비슷한 선물만 추천하지 않고 다양한 옵션 제공
-6. **품질**: 선물의 품질과 가격 대비 가치
+[분석 기준 - 프로필 데이터 우선 활용]
+다음 기준을 종합적으로 고려하여 선물을 재정렬하세요. **특히 선호도 프로필 데이터를 최우선으로 반영하세요:**
 
-[주의사항]
-- **메모와 추가 정보를 동등하게 중요하게 취급하세요.** 둘 다 사용자의 관심사와 취향을 나타냅니다.
+1. **선호도 프로필 매칭도 (최우선)**
+   - **Likes 항목과 관련된 선물을 최우선으로 선택하세요.** 신뢰도(weight)가 높을수록 더 우선순위를 높게 부여하세요.
+   - **Dislikes 항목과 관련된 선물은 반드시 제외하거나 최하위로 배치하세요.** 싫어하는 것이 명시적으로 확인된 경우 해당 카테고리나 속성을 가진 선물은 피해야 합니다.
+   - Uncertain 항목은 참고용으로만 사용하세요. 확실하지 않은 선호도이므로 절대적인 기준으로 사용하지 마세요.
+   - Likes에 여러 항목이 있는 경우, 각 항목과 관련된 선물을 고르게 분배하세요 (예: "골프" 관련 1개, "와인" 관련 1개)
+
+2. **관련성**
+   - 프로필 데이터의 Likes 항목과 선물의 카테고리, 이름, 설명 간의 직접적인 관련성
+   - 사용자의 직급, 성별, 메모, 추가 정보와의 관련성
+
+3. **적합성**
+   - 프로필에서 확인된 관심사와 취향에 맞는지 여부
+   - 메모에서 추출된 선호도가 선물 선택에 반영되었는지
+
+4. **비즈니스 적절성**
+   - 업무 관계에서 주고받기에 적합하고 예의를 갖춘 선물인지
+
+5. **실용성**
+   - 실제로 사용할 수 있고 가치 있는 선물인지
+
+6. **다양성**
+   - 프로필의 다양한 Likes 항목을 반영하여 다양한 카테고리의 선물 제공
+   - 단, Dislikes와 관련된 것은 제외
+
+7. **품질**
+   - 선물의 품질과 가격 대비 가치
+
+[주의사항 및 규칙]
+${preferenceProfile ? `- **절대 규칙: Dislikes에 명시된 항목과 관련된 선물은 반드시 제외하거나 최하위로 배치**
+  - 예: Dislikes에 "캔들"이 있고 신뢰도가 70% 이상이면, 캔들 관련 선물은 제외하거나 최하위
+  - 예: Dislikes에 "매운 음식"이 있으면, 고춧가루, 마라맛 등 매운맛 관련 선물 제외
+
+- **Likes 항목 우선 반영**
+  - Likes에 명시된 모든 항목을 최대한 반영하세요
+  - 신뢰도(weight)가 높은 Likes 항목일수록 더 높은 우선순위를 부여하세요
+  - Likes에 여러 항목이 있는 경우, 각 항목마다 최소 1개씩 관련 선물을 포함하도록 노력하세요
+  - 예: Likes에 ["골프", "와인", "허리보호대"]가 있으면 → 골프 관련 1개, 와인 관련 1개, 허리보호대 관련 1개 포함 목표
+
+- **프로필 데이터가 없는 경우**
+  - Likes, Dislikes, Uncertain가 모두 비어있거나 정보가 없으면, 기존의 메모와 추가 정보를 기반으로 판단하세요
+
+- **프로필과 메모/추가정보의 충돌**
+  - 프로필 데이터가 더 구체적이고 신뢰도가 높으므로, 프로필 데이터를 우선시하세요
+  - 메모나 추가 정보와 프로필 데이터가 충돌하는 경우, 프로필 데이터를 따르세요
+
+- **Uncertain 항목 처리**
+  - Uncertain 항목은 참고용으로만 사용하고, Likes나 Dislikes가 없을 때만 보조적으로 활용하세요
+` : `- **메모와 추가 정보를 동등하게 중요하게 취급하세요.** 둘 다 사용자의 관심사와 취향을 나타냅니다.
 - **중요: 메모와 추가 정보가 둘 다 있고 "정보없음"이 아닌 경우, 각각 최소 1개씩은 반드시 포함해야 합니다.**
   - 예: 메모에 "축구", 추가 정보에 "야구"가 있으면 → 최소 축구 관련 선물 1개, 야구 관련 선물 1개 포함 필수
   - 예: 메모에 "골프", 추가 정보에 "허리보호대"가 있으면 → 최소 골프 관련 선물 1개, 허리보호대 관련 선물 1개 포함 필수
@@ -421,6 +494,7 @@ ${giftsList}
 - 직급이나 성별에 부적절한 선물은 낮은 순위로 배치하세요
 - 모든 선물이 비슷한 카테고리인 경우, 메모와 추가 정보 모두에 관련성이 높은 선물을 우선 선택하세요
 - 사용자 입력 정보가 없거나 "정보없음"인 경우, 일반적으로 적합한 선물을 선택하세요
+`}
 
 [출력 형식]
 가장 적합한 순서대로 선물 인덱스(0부터 시작)를 JSON 배열로 반환하세요.
@@ -428,10 +502,27 @@ ${giftsList}
 정확히 ${topN}개의 인덱스를 반환하세요.
 - 인덱스는 0부터 ${gifts.length - 1} 사이의 정수여야 합니다.
 - 중복된 인덱스는 사용하지 마세요.
-- 같은 상품(이름이 같거나 유사한 상품)은 중복 선택하지 마세요.
+${preferenceProfile ? `- Dislikes와 관련된 선물은 최하위로 배치하거나 제외하세요.
+` : ''}- 같은 상품(이름이 같거나 유사한 상품)은 중복 선택하지 마세요.
 - 반드시 유효한 JSON 배열 형식으로만 반환하세요.
 
-[예시 1]
+${preferenceProfile ? `[예시 1 - Likes 우선]
+프로필 Likes: [{"item": "골프", "weight": 0.9, "evidence": ["골프를 좋아함"]}, {"item": "와인", "weight": 0.7, "evidence": ["와인 수집"]}]
+프로필 Dislikes: [{"item": "캔들", "weight": 0.8, "evidence": ["캔들 냄새 싫어함"]}]
+선물: [0: "골프 클럽", 1: "와인 세트", 2: "골프백", 3: "캔들 세트", 4: "허리 보호대"]
+출력: [0, 1, 2] (골프 클럽, 와인 세트, 골프백 - Likes 반영, 캔들 제외)
+
+[예시 2 - Dislikes 제외]
+프로필 Likes: [{"item": "커피", "weight": 0.8}]
+프로필 Dislikes: [{"item": "알코올", "weight": 0.9}]
+선물: [0: "프리미엄 커피 원두", 1: "와인 세트", 2: "위스키", 3: "티 세트"]
+출력: [0, 3, ...] (커피 원두 우선, 와인/위스키 제외)
+
+[예시 3 - 신뢰도 기반 우선순위]
+프로필 Likes: [{"item": "골프", "weight": 0.9}, {"item": "야구", "weight": 0.5}]
+선물: [0: "골프 공", 1: "야구 배트", 2: "축구공"]
+출력: [0, 1, 2] (골프가 신뢰도 높으므로 우선, 야구도 포함)
+` : `[예시 1]
 사용자 정보: 직급: 부장, 성별: 남성, 메모: 골프_매니아, 추가정보: 허리_디스크_있음
 선물: [0: "골프 클럽", 1: "와인 세트", 2: "골프백", 3: "허리 보호대", 4: "캔들"]
 출력: [0, 2, 3] (골프 클럽, 골프백, 허리 보호대 - 골프 취미와 건강 고려)
@@ -442,14 +533,14 @@ ${giftsList}
 출력: [0, 1, 2] 또는 [1, 0, 3] (메모와 추가정보 모두 반영하여 축구 관련 선물 최소 1개, 야구 관련 선물 최소 1개 포함 필수)
   - ✅ 올바른 예: [0, 1, 4] (축구공=메모 관련, 야구장갑=추가정보 관련 포함)
   - ❌ 잘못된 예: [0, 2, 4] (축구 관련만 있고 야구 관련 없음)
-
+`}
 중요: JSON 배열만 반환하세요. 다른 설명이나 텍스트 없이 순수한 JSON 배열만 반환하세요.
 예: [0, 2, 3]`;
 
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4o-mini",
+        model: GIFT_CONFIG.LLM_CHAT_MODEL,
         messages: [
           {
             role: "system",
@@ -461,14 +552,15 @@ ${giftsList}
             content: prompt,
           },
         ],
-        temperature: 0.0, // 낮춰서 더 일관된 결과
-        max_tokens: 100, // 짧게 제한하여 배열만 반환하도록
+        temperature: GIFT_CONFIG.LLM_RERANK_TEMPERATURE,
+        max_tokens: GIFT_CONFIG.LLM_RERANK_MAX_TOKENS,
       },
       {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
+        timeout: GIFT_CONFIG.LLM_TIMEOUT_MS,
       }
     );
 
@@ -927,7 +1019,7 @@ ${personaString}
 - 이벤트: ${event || "없음"}
 
 [검색된 문서 근거]
-${document.substring(0, 500)}${document.length > 500 ? "..." : ""}
+      ${document.substring(0, GIFT_CONFIG.RATIONALE_DOCUMENT_MAX_LENGTH)}${document.length > GIFT_CONFIG.RATIONALE_DOCUMENT_MAX_LENGTH ? "..." : ""}
 
 [Task]
 위 정보를 종합하여 다음을 생성하세요:
@@ -972,7 +1064,7 @@ JSON만 반환하세요, 다른 텍스트 없이:`;
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4o-mini",
+        model: GIFT_CONFIG.LLM_CHAT_MODEL,
         messages: [
           {
             role: "system",
@@ -984,14 +1076,15 @@ JSON만 반환하세요, 다른 텍스트 없이:`;
             content: prompt,
           },
         ],
-        temperature: 0.1,
-        max_tokens: 200,
+        temperature: GIFT_CONFIG.LLM_RATIONALE_TEMPERATURE,
+        max_tokens: GIFT_CONFIG.LLM_RATIONALE_MAX_TOKENS,
       },
       {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
+        timeout: GIFT_CONFIG.LLM_TIMEOUT_MS,
       }
     );
 
@@ -1102,7 +1195,7 @@ JSON 배열로 **최대 3개의 핵심 검색 키워드만** 반환하세요.
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4o-mini",
+        model: GIFT_CONFIG.LLM_CHAT_MODEL,
         messages: [
           {
             role: "system",
@@ -1122,6 +1215,7 @@ JSON 배열로 **최대 3개의 핵심 검색 키워드만** 반환하세요.
           "Content-Type": "application/json",
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
+        timeout: GIFT_CONFIG.LLM_TIMEOUT_MS,
       }
     );
 
@@ -1254,7 +1348,7 @@ JSON만 반환하고 다른 설명은 포함하지 마세요.`;
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4o-mini",
+        model: GIFT_CONFIG.LLM_CHAT_MODEL,
         messages: messages,
         temperature: 0.1,
         response_format: { type: "json_object" }
@@ -1264,6 +1358,7 @@ JSON만 반환하고 다른 설명은 포함하지 마세요.`;
           "Content-Type": "application/json",
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
+        timeout: GIFT_CONFIG.LLM_TIMEOUT_MS,
       }
     );
 
