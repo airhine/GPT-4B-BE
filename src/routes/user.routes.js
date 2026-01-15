@@ -2,6 +2,7 @@ import express from "express";
 import { body, validationResult } from "express-validator";
 import User from "../models/User.model.js";
 import { authenticate } from "../middleware/auth.middleware.js";
+import { logger } from "../utils/logger.js";
 
 const router = express.Router();
 
@@ -73,7 +74,7 @@ router.put(
         data: userWithoutPassword,
       });
     } catch (error) {
-      console.error("❌ [프로필 수정] 오류:", error.message);
+      logger.error("프로필 수정 오류", error);
       res.status(500).json({
         success: false,
         message: error.message,

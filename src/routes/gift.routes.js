@@ -130,29 +130,23 @@ router.post(
       } = req.body;
 
       const startTime = Date.now();
-      console.log("==========================================");
-      console.log("🔍 [선물 검색] 요청 시작");
-      console.log("==========================================");
-      console.log(`📝 검색어: "${searchQuery}"`);
-      console.log(`👤 페르소나 데이터:`);
-      console.log(`   - 직급: ${rank || "정보없음"}`);
-      console.log(`   - 성별: ${gender || "정보없음"}`);
-      console.log(`   - 메모: ${memo || "정보없음"}`);
-      console.log(`   - 추가메모: ${addMemo || "정보없음"}`);
-      console.log(
-        `💰 가격 범위: ${minPrice ? `${minPrice}만원` : "없음"} ~ ${
-          maxPrice ? `${maxPrice}만원` : "없음"
-        }`
-      );
-      if (minPrice || maxPrice) {
-        console.log(
-          `   (원 단위: ${
-            minPriceWon ? `${minPriceWon.toLocaleString()}원` : "없음"
-          } ~ ${maxPriceWon ? `${maxPriceWon.toLocaleString()}원` : "없음"})`
-        );
-      }
-      console.log(`📊 최종 추천 개수: ${limit}개`);
-      console.log(`🕐 요청 시간: ${new Date().toISOString()}`);
+      logger.gift.start("선물 검색", {
+        검색어: searchQuery,
+        페르소나데이터: {
+          직급: rank || "정보없음",
+          성별: gender || "정보없음",
+          메모: memo || "정보없음",
+          추가메모: addMemo || "정보없음",
+        },
+        가격범위: {
+          minPrice: minPrice ? `${minPrice}만원` : "없음",
+          maxPrice: maxPrice ? `${maxPrice}만원` : "없음",
+          minPriceWon: minPriceWon ? `${minPriceWon.toLocaleString()}원` : "없음",
+          maxPriceWon: maxPriceWon ? `${maxPriceWon.toLocaleString()}원` : "없음",
+        },
+        최종추천개수: limit,
+        요청시간: new Date().toISOString(),
+      });
 
       // 결과 저장 객체
       const searchResults = {
@@ -349,10 +343,9 @@ router.post(
           searchQuery
         );
         const keywordExtractTime = Date.now() - keywordExtractStartTime;
-        console.log(`   ✅ 키워드 추출 완료 (소요: ${keywordExtractTime}ms)`);
-        console.log(`   추출된 키워드 (${extractedKeywords.length}개):`);
-        extractedKeywords.forEach((kw, idx) => {
-          console.log(`      ${idx + 1}. "${kw}"`);
+        logger.debug("키워드 추출 완료", {
+          소요시간: `${keywordExtractTime}ms`,
+          추출된키워드: extractedKeywords,
         });
 
         // 여러 키워드로 검색하여 결과 통합
@@ -832,11 +825,10 @@ router.post(
       } = req.body;
 
       const recommendStartTime = Date.now();
-      console.log("==========================================");
-      console.log("🎁 [명함 기반 선물 추천] 요청 시작");
-      console.log("==========================================");
-      console.log(`📇 명함 ID: ${cardId}`);
-      console.log(`👤 사용자 ID: ${req.user.id}`);
+      logger.gift.start("명함 기반 선물 추천", {
+        명함ID: cardId,
+        사용자ID: req.user.id,
+      });
       console.log(
         `💰 가격 범위: ${minPrice ? `${minPrice}만원` : "없음"} ~ ${
           maxPrice ? `${maxPrice}만원` : "없음"
@@ -851,13 +843,15 @@ router.post(
           } ~ ${maxPriceWon ? `${maxPriceWon.toLocaleString()}원` : "없음"})`
         );
       }
-      console.log(`🛒 네이버 검색 포함: ${includeNaver ? "예" : "아니오"}`);
-      console.log(`📝 추가 정보: ${additionalInfo || "없음"}`);
-      console.log(`📝 요청 본문의 메모: ${memos.length > 0 ? memos.join(", ") : "없음"} (DB에서 조회한 메모 사용)`);
-      console.log(`🕐 요청 시간: ${new Date().toISOString()}`);
+      logger.debug("명함 기반 선물 추천 상세", {
+        네이버검색포함: includeNaver ? "예" : "아니오",
+        추가정보: additionalInfo || "없음",
+        요청본문의메모: memos.length > 0 ? memos.join(", ") : "없음",
+        요청시간: new Date().toISOString(),
+      });
 
       // 명함 정보 조회
-      console.log("\n[명함 조회] 명함 정보 조회 중...");
+      logger.debug("명함 정보 조회 중");
       const card = await BusinessCard.findById(cardId, req.user.id);
       if (!card) {
         logger.error("명함을 찾을 수 없습니다", { cardId, userId: req.user.id });
@@ -866,22 +860,24 @@ router.post(
           message: "명함을 찾을 수 없습니다.",
         });
       }
-      console.log(
-        `✅ 명함 조회 완료: ${card.name} (${card.position} @ ${card.company})`
-      );
+      logger.debug("명함 조회 완료", {
+        이름: card.name,
+        직책: card.position,
+        회사: card.company,
+      });
 
       // DB에서 명함별 메모 조회
-      console.log("\n[메모 조회] DB에서 명함별 메모 조회 중...");
+      logger.debug("DB에서 명함별 메모 조회 중");
       let dbMemos = [];
       try {
         dbMemos = await Memo.findByBusinessCardId(cardId, req.user.id);
-        console.log(`✅ 메모 조회 완료: ${dbMemos.length}개`);
-        if (dbMemos.length > 0) {
-          console.log(`   메모 목록:`);
-          dbMemos.forEach((memo, idx) => {
-            console.log(`      ${idx + 1}. ${memo.content.substring(0, 50)}${memo.content.length > 50 ? "..." : ""}`);
-          });
-        }
+        logger.debug("메모 조회 완료", {
+          개수: `${dbMemos.length}개`,
+          메모목록: dbMemos.map((memo, idx) => ({
+            번호: idx + 1,
+            내용: memo.content.substring(0, 50) + (memo.content.length > 50 ? "..." : ""),
+          })),
+        });
       } catch (memoError) {
         logger.warn("메모 조회 실패", memoError);
         // 메모 조회 실패해도 계속 진행 (빈 배열 사용)
@@ -1092,12 +1088,12 @@ router.post(
                 return true;
               }
 
-              console.log(`   ⚠️  "${keyword}": 결과 없음`);
+              logger.debug(`"${keyword}": 결과 없음`);
               return false;
             } catch (keywordError) {
-              console.error(
-                `   ❌ "${keyword}" 검색 실패:`,
-                keywordError.message
+              logger.error(
+                `"${keyword}" 검색 실패`,
+                keywordError
               );
               return false;
             }
@@ -1266,10 +1262,9 @@ router.post(
         `${card.name || "상대방"}님에게 적합한 선물입니다.`
       );
 
-      console.log("\n==========================================");
-      console.log("✅ [명함 기반 선물 추천] 완료");
-      console.log(`   최종 추천 개수: ${recommendedGifts.length}개`);
-      console.log("==========================================\n");
+      logger.gift.success("명함 기반 선물 추천 완료", {
+        최종추천개수: recommendedGifts.length,
+      });
 
       res.json({
         success: true,
@@ -1330,19 +1325,17 @@ router.get(
         maxPrice = null,
       } = req.query;
 
-      console.log("==========================================");
-      console.log("🛒 [네이버 쇼핑 검색] 요청 시작 (GET)");
-      console.log("==========================================");
-      console.log(`📝 검색어: "${searchQuery}"`);
-      console.log(`📊 결과 개수: ${display}개`);
-      console.log(`🔀 정렬: ${sort}`);
-      console.log(
-        `💰 가격 범위: ${minPrice ? `${minPrice}원` : "없음"} ~ ${
-          maxPrice ? `${maxPrice}원` : "없음"
-        }`
-      );
+      logger.gift.start("네이버 쇼핑 검색 (GET)", {
+        검색어: searchQuery,
+        결과개수: `${display}개`,
+        정렬: sort,
+        가격범위: {
+          minPrice: minPrice ? `${minPrice}원` : "없음",
+          maxPrice: maxPrice ? `${maxPrice}원` : "없음",
+        },
+      });
 
-      console.log("\n→ 네이버 쇼핑 API 호출 중...");
+      logger.debug("네이버 쇼핑 API 호출 중");
       const result = await getNaverGiftRecommendations(searchQuery, {
         display: parseInt(display, 10),
         sort,
@@ -1414,19 +1407,17 @@ router.post(
         maxPrice = null,
       } = req.body;
 
-      console.log("==========================================");
-      console.log("🛒 [네이버 쇼핑 검색] 요청 시작 (POST)");
-      console.log("==========================================");
-      console.log(`📝 검색어: "${searchQuery}"`);
-      console.log(`📊 결과 개수: ${display}개`);
-      console.log(`🔀 정렬: ${sort}`);
-      console.log(
-        `💰 가격 범위: ${minPrice ? `${minPrice}원` : "없음"} ~ ${
-          maxPrice ? `${maxPrice}원` : "없음"
-        }`
-      );
+      logger.gift.start("네이버 쇼핑 검색 (POST)", {
+        검색어: searchQuery,
+        결과개수: `${display}개`,
+        정렬: sort,
+        가격범위: {
+          minPrice: minPrice ? `${minPrice}원` : "없음",
+          maxPrice: maxPrice ? `${maxPrice}원` : "없음",
+        },
+      });
 
-      console.log("\n→ 네이버 쇼핑 API 호출 중...");
+      logger.debug("네이버 쇼핑 API 호출 중");
       const result = await getNaverGiftRecommendations(searchQuery, {
         display: parseInt(display, 10),
         sort,

@@ -119,7 +119,7 @@ FRONTEND_URL=http://localhost:5173
 GOOGLE_CLOUD_VISION_API_KEY=your-google-cloud-vision-api-key
 
 # LLM APIs
-OPENAI_API_KEY=your-openai-api-key
+Conference_API_KEY=your-luxia-api-key
 ANTHROPIC_API_KEY=your-anthropic-api-key
 GOOGLE_GEMINI_API_KEY=your-google-gemini-api-key
 

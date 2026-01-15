@@ -2,6 +2,7 @@ import express from 'express';
 import { body, validationResult } from 'express-validator';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { processOCR } from '../services/ocr.service.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -33,7 +34,7 @@ router.post('/process', [
       data: ocrResult
     });
   } catch (error) {
-    console.error('OCR Error:', error);
+    logger.error('OCR Error', error);
     res.status(500).json({
       success: false,
       message: error.message || 'OCR processing failed'

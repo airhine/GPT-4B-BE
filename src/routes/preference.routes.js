@@ -2,6 +2,7 @@ import express from 'express';
 import PreferenceProfile from '../models/PreferenceProfile.model.js';
 import { processMemosForPreference } from '../services/preference.service.js';
 import { authenticate } from '../middleware/auth.middleware.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -52,7 +53,7 @@ router.get('/:business_card_id/preferences', async (req, res) => {
       data: result,
     });
   } catch (error) {
-    console.error('Error fetching preferences:', error);
+    logger.error('Error fetching preferences', error);
     res.status(500).json({
       success: false,
       message: error.message,
@@ -86,7 +87,7 @@ router.post('/:business_card_id/preferences/rebuild', async (req, res) => {
       message: 'Preference profile rebuilt successfully',
     });
   } catch (error) {
-    console.error('Error rebuilding preferences:', error);
+    logger.error('Error rebuilding preferences', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to rebuild preference profile',

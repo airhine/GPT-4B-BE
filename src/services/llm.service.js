@@ -70,7 +70,7 @@ const processWithGPT = async (messages) => {
 
     throw new Error("OpenAI API returned no choices");
   } catch (error) {
-    console.error("OpenAI API Error:", error);
+    logger.error("OpenAI API Error", error);
 
     // OpenAI API 에러 메시지 추출
     if (error.response?.data?.error?.message) {
@@ -124,7 +124,7 @@ const processWithGemini = async (messages) => {
 
     return mockLLMResponse();
   } catch (error) {
-    console.error("Gemini API Error:", error);
+    logger.error("Gemini API Error", error);
     return mockLLMResponse();
   }
 };
@@ -221,7 +221,7 @@ export const processPersonaEmbedding = async (personaData) => {
 
     throw new Error("OpenAI API returned no choices");
   } catch (error) {
-    console.error("Persona Embedding API Error:", error);
+    logger.error("Persona Embedding API Error", error);
 
     if (error.response?.data?.error?.message) {
       throw new Error(`OpenAI API Error: ${error.response.data.error.message}`);
@@ -278,7 +278,7 @@ export const generateEmbedding = async (
 
     throw new Error("OpenAI Embedding API returned no embedding");
   } catch (error) {
-    console.error("OpenAI Embedding API Error:", error);
+    logger.error("OpenAI Embedding API Error", error);
 
     if (error.response?.data?.error?.message) {
       throw new Error(
@@ -321,50 +321,94 @@ export const rerankGifts = async (
     return gifts;
   }
 
-  try {
-    // 모든 선물 후보 로그 출력
-    console.log(
-      `\n   📦 [리랭킹 전] 선물 후보 전체 목록 (총 ${gifts.length}개):`
-    );
-    gifts.forEach((gift, index) => {
+  // preferenceProfile이 있고 likes가 있으면, likes 관련 선물을 우선적으로 포함
+  let filteredGifts = gifts;
+  let filteredIndices = gifts.map((_, idx) => idx);
+  
+  if (preferenceProfile && preferenceProfile.likes && Array.isArray(preferenceProfile.likes) && preferenceProfile.likes.length > 0) {
+    console.log("=== Likes 기반 선물 사전 필터링 ===");
+    const likesItems = preferenceProfile.likes.map(l => l.item.toLowerCase().trim()).filter(Boolean);
+    console.log("Likes 항목:", likesItems);
+    
+    // 각 선물이 likes와 관련있는지 확인
+    const likesRelatedGifts = [];
+    const otherGifts = [];
+    
+    for (let i = 0; i < gifts.length; i++) {
+      const gift = gifts[i];
       const metadata = gift.metadata || {};
-      const document = gift.document || "";
-      const name = metadata.name || metadata.product_name || "이름 없음";
-      const category = metadata.category || "카테고리 없음";
-      const price = metadata.price || "가격 정보 없음";
-      const brand = metadata.brand || "브랜드 없음";
-      const event = metadata.event || "";
-      const vibe = metadata.vibe || "";
-      const utility = metadata.utility || "";
-      const source = gift.source || "unknown";
-      const similarity = gift.similarity || "N/A";
-      const description = document || metadata.unified_text || "";
+      const name = (metadata.name || metadata.product_name || "").toLowerCase();
+      const category = (metadata.category || "").toLowerCase();
+      const document = (gift.document || metadata.unified_text || "").toLowerCase();
+      const searchText = `${name} ${category} ${document}`;
 
-      console.log(`\n   ${index}. [${source}] ${name}`);
-      console.log(`      ID: ${gift.id || "없음"}`);
-      console.log(`      카테고리: ${category}`);
-      console.log(`      가격: ${price}`);
-      console.log(`      브랜드: ${brand}`);
-      if (event) console.log(`      이벤트: ${event}`);
-      if (vibe) console.log(`      감성/분위기: ${vibe}`);
-      if (utility) console.log(`      효용/기능: ${utility}`);
-      if (similarity !== "N/A") console.log(`      유사도: ${similarity}`);
-      if (description) {
-        const descPreview =
-          description.length > 150
-            ? description.substring(0, 150) + "..."
-            : description;
-        console.log(`      설명: ${descPreview}`);
+      // likes 항목 중 하나라도 포함되는지 확인
+      const isRelated = likesItems.some(likeItem => {
+        return searchText.includes(likeItem) || name.includes(likeItem) || category.includes(likeItem);
+      });
+
+      if (isRelated) {
+        likesRelatedGifts.push(i);
+      } else {
+        otherGifts.push(i);
       }
-      if (metadata.url || metadata.link) {
-        console.log(`      URL: ${metadata.url || metadata.link}`);
-      }
+    }
+    
+    console.log("Likes 관련 선물:", likesRelatedGifts.length, "개");
+    console.log("기타 선물:", otherGifts.length, "개");
+    
+    // likes 관련 선물을 우선적으로 포함하되, 최대 30개로 제한 (프롬프트 길이 고려)
+    // likes 관련 선물 + 기타 선물 조합
+    const maxGiftsForRerank = 30; // 프롬프트 길이를 고려한 최대 개수
+    const likesToInclude = Math.min(likesRelatedGifts.length, maxGiftsForRerank);
+    const othersToInclude = Math.max(0, maxGiftsForRerank - likesToInclude);
+    
+    filteredIndices = [
+      ...likesRelatedGifts.slice(0, likesToInclude),
+      ...otherGifts.slice(0, othersToInclude)
+    ];
+    
+    filteredGifts = filteredIndices.map(idx => gifts[idx]);
+    
+    console.log(`필터링 결과: ${filteredGifts.length}개 (Likes 관련: ${likesToInclude}개, 기타: ${othersToInclude}개)`);
+    console.log("필터링된 인덱스:", filteredIndices);
+    console.log("===================================");
+  } else if (gifts.length > 30) {
+    // preferenceProfile이 없거나 likes가 없으면, similarity 기반으로 상위 30개만 선택
+    console.log(`선물 개수가 ${gifts.length}개로 많아 similarity 기반 상위 30개만 리랭킹에 사용`);
+    filteredIndices = gifts.map((_, idx) => idx).slice(0, 30);
+    filteredGifts = filteredIndices.map(idx => gifts[idx]);
+  }
+
+  try {
+    // 모든 선물 후보 로그 출력 (DEBUG 레벨)
+    logger.debug(`리랭킹 전 선물 후보 전체 목록 (총 ${gifts.length}개)`, {
+      gifts: gifts.map((gift, index) => {
+        const metadata = gift.metadata || {};
+        const document = gift.document || "";
+        return {
+          index,
+          id: gift.id || "없음",
+          name: metadata.name || metadata.product_name || "이름 없음",
+          category: metadata.category || "카테고리 없음",
+          price: metadata.price || "가격 정보 없음",
+          brand: metadata.brand || "브랜드 없음",
+          event: metadata.event || "",
+          vibe: metadata.vibe || "",
+          utility: metadata.utility || "",
+          source: gift.source || "unknown",
+          similarity: gift.similarity || "N/A",
+          description: (document || metadata.unified_text || "").substring(0, 150),
+          url: metadata.url || metadata.link || null
+        };
+      })
     });
-    console.log(`\n   ========================================\n`);
 
-    // Format gifts for LLM with detailed information
-    const giftsList = gifts
-      .map((gift, index) => {
+    // Format gifts for LLM with detailed information (필터링된 선물 사용)
+    const giftsList = filteredGifts
+      .map((gift, originalIndex) => {
+        // 필터링된 인덱스에서 원본 인덱스 찾기
+        const index = filteredIndices[filteredGifts.indexOf(gift)];
         const metadata = gift.metadata || {};
         const document = gift.document || "";
         const name = metadata.name || metadata.product_name || "이름 없음";
@@ -377,7 +421,9 @@ export const rerankGifts = async (
         // document나 unified_text에서 상세 정보 추출
         const description = document || metadata.unified_text || "";
 
-        return `[선물 ${index}]
+        // 필터링된 리스트에서의 인덱스 (0부터 시작)
+        const displayIndex = filteredGifts.indexOf(gift);
+        return `[선물 ${displayIndex}]
 - 이름: ${name}
 - 카테고리: ${category}
 - 가격: ${price}
@@ -389,6 +435,15 @@ export const rerankGifts = async (
         }`;
       })
       .join("\n\n");
+
+    // #region agent log - giftsList 길이 확인
+    console.log("=== 리랭킹 프롬프트 생성 확인 ===");
+    console.log("총 선물 개수:", gifts.length);
+    console.log("giftsList 길이:", giftsList.length, "문자");
+    console.log("giftsList 예상 토큰 수 (대략):", Math.ceil(giftsList.length / 4), "토큰");
+    console.log("giftsList 처음 1000자:", giftsList.substring(0, 1000));
+    console.log("giftsList 마지막 500자:", giftsList.substring(Math.max(0, giftsList.length - 500)));
+    // #endregion
 
     // 원본 사용자 입력 정보 포맷팅
     const userInputInfo = `
@@ -411,17 +466,51 @@ export const rerankGifts = async (
       }).join('\n');
     };
 
+    // #region agent log - preferenceProfile 확인
+    logger.debug("PreferenceProfile 전달 확인", {
+      hasPreferenceProfile: !!preferenceProfile,
+      likesCount: preferenceProfile?.likes?.length || 0,
+      dislikesCount: preferenceProfile?.dislikes?.length || 0,
+      uncertainCount: preferenceProfile?.uncertain?.length || 0,
+      likesItems: preferenceProfile?.likes?.map(l => ({ item: l.item, weight: l.weight })) || [],
+      rawPreferenceProfile: preferenceProfile
+    });
+    // #endregion
+
+    const formattedLikes = formatPreferences(preferenceProfile?.likes, 'likes');
+    const formattedDislikes = formatPreferences(preferenceProfile?.dislikes, 'dislikes');
+    const formattedUncertain = formatPreferences(preferenceProfile?.uncertain, 'uncertain');
+
+    // #region agent log - 포맷팅 결과 확인
+    logger.debug("PreferenceProfile 포맷팅 결과", {
+      formattedLikes,
+      formattedDislikes,
+      formattedUncertain,
+      likesLength: formattedLikes.length,
+      dislikesLength: formattedDislikes.length,
+      uncertainLength: formattedUncertain.length
+    });
+    // #endregion
+
     const profileSection = preferenceProfile ? `
 [선호도 프로필 데이터 (메모 기반 추출)]
 **좋아하는 것 (Likes):**
-${formatPreferences(preferenceProfile.likes, 'likes')}
+${formattedLikes}
 
 **싫어하는 것 (Dislikes):**
-${formatPreferences(preferenceProfile.dislikes, 'dislikes')}
+${formattedDislikes}
 
 **불확실한 선호도 (Uncertain):**
-${formatPreferences(preferenceProfile.uncertain, 'uncertain')}
+${formattedUncertain}
 ` : '';
+
+    // #region agent log - profileSection 확인
+    logger.debug("ProfileSection 생성 확인", {
+      hasProfileSection: !!profileSection,
+      profileSectionLength: profileSection.length,
+      profileSectionPreview: profileSection.substring(0, 500)
+    });
+    // #endregion
 
     const prompt = `[Role]
 당신은 비즈니스 상황에서 거래처, 동료, 상사 등에게 줄 선물을 추천하는 전문가입니다.
@@ -500,7 +589,8 @@ ${preferenceProfile ? `- **절대 규칙: Dislikes에 명시된 항목과 관련
 가장 적합한 순서대로 선물 인덱스(0부터 시작)를 JSON 배열로 반환하세요.
 형식: [2, 0, 4]
 정확히 ${topN}개의 인덱스를 반환하세요.
-- 인덱스는 0부터 ${gifts.length - 1} 사이의 정수여야 합니다.
+- 인덱스는 0부터 ${filteredGifts.length - 1} 사이의 정수여야 합니다.
+- 현재 후보 선물은 총 ${filteredGifts.length}개입니다.
 - 중복된 인덱스는 사용하지 마세요.
 ${preferenceProfile ? `- Dislikes와 관련된 선물은 최하위로 배치하거나 제외하세요.
 ` : ''}- 같은 상품(이름이 같거나 유사한 상품)은 중복 선택하지 마세요.
@@ -536,6 +626,38 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
 `}
 중요: JSON 배열만 반환하세요. 다른 설명이나 텍스트 없이 순수한 JSON 배열만 반환하세요.
 예: [0, 2, 3]`;
+
+    // #region agent log - 최종 프롬프트 확인
+    logger.debug("최종 프롬프트에 preferenceProfile 포함 확인", {
+      promptLength: prompt.length,
+      hasProfileSection: prompt.includes('[선호도 프로필 데이터'),
+      hasLikesSection: prompt.includes('**좋아하는 것 (Likes):**'),
+      profileSectionInPrompt: prompt.includes(profileSection),
+      promptPreview: prompt.substring(0, 1000)
+    });
+    
+    // 프롬프트에 profileSection이 포함되어 있는지 명확히 확인
+    console.log("=== PreferenceProfile 전달 확인 ===");
+    console.log("hasPreferenceProfile:", !!preferenceProfile);
+    if (preferenceProfile) {
+      console.log("likes:", JSON.stringify(preferenceProfile.likes, null, 2));
+      console.log("dislikes:", JSON.stringify(preferenceProfile.dislikes, null, 2));
+      console.log("uncertain:", JSON.stringify(preferenceProfile.uncertain, null, 2));
+    }
+    console.log("profileSection length:", profileSection.length);
+    console.log("profileSection preview:", profileSection.substring(0, 500));
+    console.log("프롬프트에 profileSection 포함:", prompt.includes(profileSection));
+    console.log("프롬프트에 Likes 섹션 포함:", prompt.includes('**좋아하는 것 (Likes):**'));
+    console.log("프롬프트 전체 길이:", prompt.length);
+    console.log("프롬프트 일부 (profileSection 주변):", prompt.substring(prompt.indexOf('[Persona 요약]') - 50, prompt.indexOf('[Persona 요약]') + 500));
+    console.log("프롬프트 전체 길이:", prompt.length, "문자");
+    console.log("프롬프트 예상 토큰 수 (대략):", Math.ceil(prompt.length / 4), "토큰");
+    console.log("LLM_RERANK_MAX_TOKENS:", GIFT_CONFIG.LLM_RERANK_MAX_TOKENS);
+    console.log("프롬프트에 giftsList 포함 여부:", prompt.includes(giftsList.substring(0, 100)));
+    console.log("프롬프트에 후보 선물 목록 섹션 포함:", prompt.includes('[후보 선물 목록]'));
+    console.log("프롬프트 마지막 부분:", prompt.substring(Math.max(0, prompt.length - 500)));
+    console.log("=====================================");
+    // #endregion
 
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
@@ -585,59 +707,120 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
         }
 
         rankedIndices = JSON.parse(cleanedResult);
+        console.log("=== LLM 리랭킹 결과 ===");
+        console.log("LLM이 반환한 인덱스 (필터링된 리스트 기준):", rankedIndices);
+        // #endregion
       } catch (parseError) {
-        console.error("Failed to parse rerank result:", result);
-        console.error("Parse error:", parseError.message);
+        logger.error("Failed to parse rerank result", { result, error: parseError.message });
         // Fallback: return top N by similarity
-        return gifts.slice(0, topN);
+        return filteredGifts.slice(0, topN).map(g => {
+          const idx = filteredGifts.indexOf(g);
+          return gifts[filteredIndices[idx]];
+        }).filter(Boolean);
       }
 
       // Validate indices
       if (!Array.isArray(rankedIndices)) {
-        console.warn("Invalid rerank result (not an array):", rankedIndices);
-        return gifts.slice(0, topN);
+        logger.warn("Invalid rerank result (not an array)", rankedIndices);
+        return filteredGifts.slice(0, topN).map(g => {
+          const idx = filteredGifts.indexOf(g);
+          return gifts[filteredIndices[idx]];
+        }).filter(Boolean);
       }
 
       if (rankedIndices.length === 0) {
-        console.warn(
-          "Invalid rerank result (empty array), using similarity order"
-        );
-        return gifts.slice(0, topN);
+        logger.warn("Invalid rerank result (empty array), using similarity order");
+        return filteredGifts.slice(0, topN).map(g => {
+          const idx = filteredGifts.indexOf(g);
+          return gifts[filteredIndices[idx]];
+        }).filter(Boolean);
       }
 
-      // Convert to integers and filter valid indices
+      // Convert to integers and filter valid indices (필터링된 리스트 기준)
       const validIndices = rankedIndices
         .map((idx) => {
           const numIdx = typeof idx === "string" ? parseInt(idx, 10) : idx;
           return Number.isInteger(numIdx) &&
             numIdx >= 0 &&
-            numIdx < gifts.length
+            numIdx < filteredGifts.length
             ? numIdx
             : null;
         })
         .filter((idx) => idx !== null)
         .slice(0, topN);
+      
+      console.log("유효한 인덱스 (필터링된 리스트 기준):", validIndices);
+      
+      // 필터링된 리스트의 인덱스를 원본 gifts 배열의 인덱스로 변환
+      const originalIndices = validIndices.map(filteredIdx => filteredIndices[filteredIdx]);
+      console.log("원본 gifts 배열 인덱스:", originalIndices);
+      console.log("=========================");
 
       if (validIndices.length === 0) {
-        console.warn("No valid indices from rerank, using similarity order");
-        return gifts.slice(0, topN);
+        logger.warn("No valid indices from rerank, using similarity order");
+        return filteredGifts.slice(0, topN).map(g => {
+          const idx = filteredGifts.indexOf(g);
+          return gifts[filteredIndices[idx]];
+        }).filter(Boolean);
       }
 
-      // Remove duplicates while preserving order
+      // Remove duplicates while preserving order (원본 인덱스 기준)
       const uniqueIndices = [];
       const seen = new Set();
-      for (const idx of validIndices) {
+      for (const idx of originalIndices) {
         if (!seen.has(idx)) {
           seen.add(idx);
           uniqueIndices.push(idx);
         }
       }
+      
+      // 원본 gifts 배열에서 선물 가져오기
+      const rankedGifts = uniqueIndices.map(idx => gifts[idx]).filter(Boolean);
+      
+      console.log("최종 리랭킹된 선물 인덱스:", uniqueIndices);
+      console.log("최종 리랭킹된 선물 개수:", rankedGifts.length);
+      console.log("최종 리랭킹된 선물 이름:", rankedGifts.map(g => g.metadata?.name || g.metadata?.product_name || '이름없음'));
 
       if (uniqueIndices.length === 0) {
-        console.warn(
-          "No unique valid indices from rerank, using similarity order"
-        );
-        return gifts.slice(0, topN);
+        logger.warn("No unique valid indices from rerank, using similarity order");
+        return filteredGifts.slice(0, topN).map(g => {
+          const idx = filteredGifts.indexOf(g);
+          return gifts[filteredIndices[idx]];
+        }).filter(Boolean);
+      }
+
+      // preferenceProfile이 있으면 메모/추가메모 검증 건너뛰고 바로 반환
+      if (preferenceProfile && preferenceProfile.likes && Array.isArray(preferenceProfile.likes) && preferenceProfile.likes.length > 0) {
+        console.log("PreferenceProfile이 있으므로 메모/추가메모 검증 건너뜀");
+        // 중복 제거만 수행
+        const finalGifts = [];
+        const seenProductIds = new Set();
+        const seenProductNames = new Set();
+        
+        for (const gift of rankedGifts.slice(0, topN)) {
+          const productId = gift.id || gift.metadata?.productId || gift.metadata?.id;
+          const productName = (gift.metadata?.name || gift.metadata?.product_name || gift.name || "").trim().toLowerCase();
+          
+          let isDuplicate = false;
+          if (productId && seenProductIds.has(productId)) {
+            isDuplicate = true;
+          } else if (productId) {
+            seenProductIds.add(productId);
+          }
+          
+          if (!isDuplicate && productName && seenProductNames.has(productName)) {
+            isDuplicate = true;
+          } else if (!isDuplicate && productName) {
+            seenProductNames.add(productName);
+          }
+          
+          if (!isDuplicate) {
+            finalGifts.push(gift);
+          }
+        }
+        
+        console.log("최종 반환 선물 개수:", finalGifts.length);
+        return finalGifts;
       }
 
       // 메모와 추가 메모 키워드가 각각 최소 1개씩 포함되도록 강제 보장
@@ -646,8 +829,8 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
 
       // 메모와 추가 메모가 둘 다 있고 "정보없음"이 아닐 때만 검증
       if (memo && addMemo && memo !== "정보없음" && addMemo !== "정보없음") {
-        console.log(
-          `   🔍 메모("${memo}")와 추가 메모("${addMemo}") 각각 최소 1개씩 포함 검증 중...`
+        logger.debug(
+          `메모("${memo}")와 추가 메모("${addMemo}") 각각 최소 1개씩 포함 검증 중`
         );
 
         // 키워드 추출
@@ -698,8 +881,8 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
           }
         }
 
-        console.log(
-          `   📊 분석 결과: 메모 관련 ${memoRelatedGifts.length}개, 추가 메모 관련 ${addMemoRelatedGifts.length}개, 기타 ${otherGifts.length}개`
+        logger.debug(
+          `분석 결과: 메모 관련 ${memoRelatedGifts.length}개, 추가 메모 관련 ${addMemoRelatedGifts.length}개, 기타 ${otherGifts.length}개`
         );
 
         // 현재 리랭킹된 선물들을 분류
@@ -710,8 +893,8 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
           addMemoRelatedGifts.includes(idx)
         ).length;
 
-        console.log(
-          `   📋 현재 리랭킹 결과: 메모 관련 ${currentMemoCount}개, 추가 메모 관련 ${currentAddMemoCount}개`
+        logger.debug(
+          `현재 리랭킹 결과: 메모 관련 ${currentMemoCount}개, 추가 메모 관련 ${currentAddMemoCount}개`
         );
 
         // 재구성: 각각 최소 1개씩 포함되도록 강제
@@ -725,15 +908,11 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
           );
           if (availableMemoGifts.length > 0) {
             finalIndices.push(availableMemoGifts[0]);
-            console.log(
-              `   ✅ 메모 관련 선물 추가: 인덱스 ${availableMemoGifts[0]}`
-            );
+            logger.debug(`메모 관련 선물 추가: 인덱스 ${availableMemoGifts[0]}`);
           } else {
             // 이미 포함된 것 중 메모 관련 선물 사용
             finalIndices.push(memoRelatedGifts[0]);
-            console.log(
-              `   ✅ 메모 관련 선물 사용: 인덱스 ${memoRelatedGifts[0]}`
-            );
+            logger.debug(`메모 관련 선물 사용: 인덱스 ${memoRelatedGifts[0]}`);
           }
         }
 
@@ -745,9 +924,7 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
           );
           if (availableAddMemoGifts.length > 0) {
             finalIndices.push(availableAddMemoGifts[0]);
-            console.log(
-              `   ✅ 추가 메모 관련 선물 추가: 인덱스 ${availableAddMemoGifts[0]}`
-            );
+            logger.debug(`추가 메모 관련 선물 추가: 인덱스 ${availableAddMemoGifts[0]}`);
           } else {
             // 이미 포함된 것 중 추가 메모 관련 선물 사용
             const existingAddMemoGifts = addMemoRelatedGifts.filter((idx) =>
@@ -755,9 +932,7 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
             );
             if (existingAddMemoGifts.length > 0) {
               finalIndices.push(existingAddMemoGifts[0]);
-              console.log(
-                `   ✅ 추가 메모 관련 선물 사용: 인덱스 ${existingAddMemoGifts[0]}`
-              );
+              logger.debug(`추가 메모 관련 선물 사용: 인덱스 ${existingAddMemoGifts[0]}`);
             }
           }
         }
@@ -811,8 +986,8 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
 
         finalIndices.push(...candidates.slice(0, remainingSlots));
 
-        console.log(
-          `   ✅ 최종 재구성: ${finalIndices.length}개 (메모 관련: ${
+        logger.debug(
+          `최종 재구성: ${finalIndices.length}개 (메모 관련: ${
             finalIndices.filter((idx) => memoRelatedGifts.includes(idx)).length
           }개, 추가 메모 관련: ${
             finalIndices.filter((idx) => addMemoRelatedGifts.includes(idx))
@@ -878,14 +1053,9 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
           duplicateProductIds.length > 0 ||
           duplicateProductNames.length > 0
         ) {
-          console.log(`   ⚠️  중복된 상품 제거:`);
-          duplicateProductIds.forEach((dup) => {
-            console.log(
-              `      - 인덱스 ${dup.idx}: ${dup.name} (ID 중복: ${dup.productId})`
-            );
-          });
-          duplicateProductNames.forEach((dup) => {
-            console.log(`      - 인덱스 ${dup.idx}: ${dup.name} (이름 중복)`);
+          logger.warn("중복된 상품 제거", {
+            duplicateIds: duplicateProductIds,
+            duplicateNames: duplicateProductNames
           });
         }
 
@@ -947,14 +1117,9 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
       }
 
       if (duplicateProductIds.length > 0 || duplicateProductNames.length > 0) {
-        console.log(`   ⚠️  중복된 상품 제거:`);
-        duplicateProductIds.forEach((dup) => {
-          console.log(
-            `      - 인덱스 ${dup.idx}: ${dup.name} (ID 중복: ${dup.productId})`
-          );
-        });
-        duplicateProductNames.forEach((dup) => {
-          console.log(`      - 인덱스 ${dup.idx}: ${dup.name} (이름 중복)`);
+        logger.warn("중복된 상품 제거", {
+          duplicateIds: duplicateProductIds,
+          duplicateNames: duplicateProductNames
         });
       }
 
@@ -963,10 +1128,10 @@ ${preferenceProfile ? `[예시 1 - Likes 우선]
 
     throw new Error("OpenAI API returned no choices");
   } catch (error) {
-    console.error("Rerank API Error:", error);
+    logger.error("Rerank API Error", error);
 
     // Fallback: return top N by similarity if rerank fails
-    console.warn("Rerank failed, using similarity order");
+    logger.warn("Rerank failed, using similarity order");
     return gifts.slice(0, topN);
   }
 };
@@ -1107,7 +1272,7 @@ JSON만 반환하세요, 다른 텍스트 없이:`;
           };
         }
       } catch (parseError) {
-        console.error("Failed to parse rationale:", result);
+        logger.error("Failed to parse rationale", { result, error: parseError.message });
       }
     }
 
@@ -1124,7 +1289,7 @@ JSON만 반환하세요, 다른 텍스트 없이:`;
       description: fallbackDesc,
     };
   } catch (error) {
-    console.error("Rationale generation error:", error);
+    logger.error("Rationale generation error", error);
 
     // Fallback
     const metadata = gift.metadata || {};
@@ -1242,14 +1407,14 @@ JSON 배열로 **최대 3개의 핵심 검색 키워드만** 반환하세요.
           );
         }
       } catch (parseError) {
-        console.error("Keyword extraction parse error:", parseError.message);
+        logger.error("Keyword extraction parse error", { error: parseError.message });
       }
     }
 
     // 파싱 실패 시 폴백
     return extractKeywordsFallback(personaData, userQuery);
   } catch (error) {
-    console.error("Keyword extraction API error:", error.message);
+    logger.error("Keyword extraction API error", { error: error.message });
     return extractKeywordsFallback(personaData, userQuery);
   }
 };
@@ -1372,7 +1537,7 @@ JSON만 반환하고 다른 설명은 포함하지 마세요.`;
         const cleanedContent = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         parsed = JSON.parse(cleanedContent);
       } catch (parseError) {
-        console.error('Failed to parse LLM response as JSON:', content);
+        logger.error('Failed to parse LLM response as JSON', { content, error: parseError.message });
         return { likes: [], dislikes: [], uncertain: [] };
       }
       
@@ -1405,7 +1570,7 @@ JSON만 반환하고 다른 설명은 포함하지 마세요.`;
 
     throw new Error("OpenAI API returned no choices");
   } catch (error) {
-    console.error("Preference extraction error:", error);
+    logger.error("Preference extraction error", error);
     // Return empty preferences on error
     return { likes: [], dislikes: [], uncertain: [] };
   }
