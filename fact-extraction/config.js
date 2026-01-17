@@ -63,8 +63,8 @@ export const config = {
     counts: {
       users: 1, // 시나리오당 사용자 1명
       cardsPerUser: 1, // 사용자당 명함 1개
-      memosPerCard: 10, // 명함당 메모 10개
-      eventsPerCard: 10, // 명함당 일정 10개
+      memosPerCard: 6, // 명함당 메모 5개
+      eventsPerCard: 6, // 명함당 일정 5개
       giftsPerCard: 1, // 명함당 선물 1개
       chatsPerCard: 1, // 명함당 채팅 1개
     },

@@ -4,7 +4,7 @@ class Chat {
   // Find all chats for a user
   static async findByUserId(userId, isActive = true) {
     const [rows] = await pool.query(
-      `SELECT id, userId, llmProvider, title, isActive, createdAt, updatedAt,
+      `SELECT id, userId, cardId, llmProvider, title, isActive, createdAt, updatedAt,
        JSON_LENGTH(messages) as messageCount
        FROM chats
        WHERE userId = ? AND isActive = ?
@@ -64,6 +64,7 @@ class Chat {
   static async create(chatData) {
     const {
       userId,
+      cardId = null,  // 명함 ID (선물 추천 대화 시 연결)
       llmProvider = 'gpt',
       title,
       messages = []
@@ -77,9 +78,9 @@ class Chat {
 
     try {
       const [result] = await pool.query(
-        `INSERT INTO chats (userId, llmProvider, title, messages, isActive)
-         VALUES (?, ?, ?, ?, TRUE)`,
-        [userId, llmProvider, title, JSON.stringify(serializedMessages)]
+        `INSERT INTO chats (userId, cardId, llmProvider, title, messages, isActive)
+         VALUES (?, ?, ?, ?, ?, TRUE)`,
+        [userId, cardId, llmProvider, title, JSON.stringify(serializedMessages)]
       );
 
       return await this.findById(result.insertId);

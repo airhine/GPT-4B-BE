@@ -60,6 +60,7 @@
             font-size: 2rem;
             background: var(--gradient-1);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
@@ -564,6 +565,7 @@
             font-weight: 600;
             background: var(--gradient-1);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
@@ -1220,13 +1222,15 @@
                     document.getElementById('r-events').textContent = saveData.summary.events;
                 }
 
-                // Source events (선택한 명함에 대해서만 + 새로 생성된 데이터만!)
+                // Source events (선택한 명함에 대해서만!)
+                // ⚠️ createdAfter 제거: TimestampGenerator가 과거 시간을 생성하므로 필터링 문제 발생
+                // cardIds 필터만으로 충분히 새 데이터만 처리됨
                 setStatus('source', 'running');
-                addLog(`source_event 생성 중 (대상 명함: [${cardIds.join(', ')}], 새 데이터만)...`, 'info');
+                addLog(`source_event 생성 중 (대상 명함: [${cardIds.join(', ')}])...`, 'info');
                 const srcRes = await fetch(`${API}/populate-source`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ userId, cardIds, createdAfter })
+                    body: JSON.stringify({ userId, cardIds })  // createdAfter 제거
                 });
                 const srcData = await srcRes.json();
                 if (!srcRes.ok) throw new Error(srcData.error);

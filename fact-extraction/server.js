@@ -228,18 +228,18 @@ app.post("/api/scenario/confirm-for-card", async (req, res) => {
       giftsCount++;
     }
 
-    // 채팅 저장
+    // 채팅 저장 (cardId 연결)
     for (const chat of (data.chats || [])) {
       if (!chat.messages || !Array.isArray(chat.messages)) {
         console.log(`스킵: chat, messages가 없거나 배열이 아님`);
         continue;
       }
       await connection.query(
-        `INSERT INTO chats (userId, llmProvider, title, messages, isActive, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [userId, "gpt", chat.title || '선물 추천 대화', JSON.stringify(chat.messages), 1, chat.createdAt || new Date()]
+        `INSERT INTO chats (userId, cardId, llmProvider, title, messages, isActive, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [userId, cardId, "gpt", chat.title || '선물 추천 대화', JSON.stringify(chat.messages), 1, chat.createdAt || new Date()]
       );
-      console.log(`채팅 저장: (${chat.title || '선물 추천 대화'})`);
+      console.log(`채팅 저장: cardId=${cardId} (${chat.title || '선물 추천 대화'})`);
       chatsCount++;
     }
 

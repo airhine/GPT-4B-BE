@@ -63,6 +63,7 @@ router.post(
     body("message").notEmpty().trim(),
     body("llmProvider").optional().isIn(["gpt", "claude", "gemini"]),
     body("chatId").optional(),
+    body("cardId").optional().isInt().toInt(),  // 명함 ID (선물 추천 시 연결)
   ],
   async (req, res) => {
     try {
@@ -74,8 +75,8 @@ router.post(
         });
       }
 
-      const { message, llmProvider = "gpt", chatId } = req.body;
-      logger.info("Chat request", { message: message?.substring(0, 50), llmProvider, chatId, userId: req.user.id });
+      const { message, llmProvider = "gpt", chatId, cardId } = req.body;
+      logger.info("Chat request", { message: message?.substring(0, 50), llmProvider, chatId, cardId, userId: req.user.id });
 
       let chat;
 
@@ -93,14 +94,15 @@ router.post(
         logger.debug("Found existing chat", { chatId: chat.id });
       } else {
         // Create new chat
-        logger.debug("Creating new chat");
+        logger.debug("Creating new chat", { cardId });
         chat = await Chat.create({
           userId: req.user.id,
+          cardId: cardId || null,  // 명함 ID 연결
           llmProvider,
           messages: [],
           title: message.substring(0, 50), // Use first 50 chars as title
         });
-        logger.info("Created new chat", { chatId: chat.id });
+        logger.info("Created new chat", { chatId: chat.id, cardId: chat.cardId });
       }
 
       // Add user message
@@ -182,6 +184,7 @@ router.post("/create-history", [
   body("messages").isArray().notEmpty(),
   body("title").optional().trim(),
   body("llmProvider").optional().isIn(["gpt", "claude", "gemini"]),
+  body("cardId").optional().isInt().toInt(),  // 명함 ID (선물 추천 대화 시 연결)
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -192,7 +195,8 @@ router.post("/create-history", [
       });
     }
 
-    const { messages, title, llmProvider = "gpt" } = req.body;
+    const { messages, title, llmProvider = "gpt", cardId } = req.body;
+    logger.info("Create chat history", { title, cardId, messageCount: messages?.length });
 
     // Ensure messages have proper format
     const formattedMessages = messages.map(msg => ({
@@ -203,10 +207,13 @@ router.post("/create-history", [
 
     const chat = await Chat.create({
       userId: req.user.id,
+      cardId: cardId || null,  // 명함 ID 연결
       llmProvider,
       title: title || "선물 추천 대화",
       messages: formattedMessages,
     });
+
+    logger.info("Chat history created", { chatId: chat.id, cardId: chat.cardId });
 
     res.json({
       success: true,

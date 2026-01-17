@@ -206,14 +206,18 @@ async function saveGeneratedData(data, userId = null) {
     }
     console.log(`선물 ${data.gifts.length}개 생성`);
 
-    // 5. 채팅 생성
+    // 5. 채팅 생성 (cardId 연결)
     for (const chat of data.chats) {
+      // cardIndex가 있으면 해당 명함에 연결, 없으면 첫 번째 명함에 연결
+      const cardId = chat.cardIndex !== undefined 
+        ? cardIdMap[chat.cardIndex] 
+        : (cardIdMap[0] || null);
       const messagesJson = JSON.stringify(chat.messages);
       
       await connection.query(
-        `INSERT INTO chats (userId, llmProvider, title, messages, isActive)
-         VALUES (?, 'gpt', ?, ?, TRUE)`,
-        [finalUserId, chat.title, messagesJson]
+        `INSERT INTO chats (userId, cardId, llmProvider, title, messages, isActive)
+         VALUES (?, ?, 'gpt', ?, ?, TRUE)`,
+        [finalUserId, cardId, chat.title, messagesJson]
       );
     }
     console.log(`채팅 ${data.chats.length}개 생성`);

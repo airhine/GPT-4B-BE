@@ -10,62 +10,7 @@ import { parseLinkedCardIds } from "./parsers/event-parser.js";
 import { inferCardIdsFromChat } from "./parsers/chat-parser.js";
 import { buildRawText } from "./parsers/source-text-builder.js";
 import { validateFacts, deduplicateFacts } from "./validators/fact-validator.js";
-
-/**
- * LLM 생성 데이터의 cardId/business_card_id를 실제 DB ID로 변환하는 유틸리티
- * LLM은 1-based 인덱스(cardId: 1 = 첫 번째 명함)를 생성함
- * @param {Object} item - LLM이 생성한 데이터 아이템
- * @param {Object} cardIdMap - {0: 실제DB_ID, 1: 실제DB_ID, ...}
- * @returns {number|null} 실제 DB의 card_id 또는 null
- */
-function resolveCardId(item, cardIdMap) {
-  // 가능한 필드들을 순서대로 확인
-  const possibleFields = ['cardIndex', 'cardId', 'card_id', 'business_card_id'];
-  
-  for (const field of possibleFields) {
-    if (item[field] !== undefined && item[field] !== null) {
-      const value = parseInt(item[field]);
-      if (isNaN(value)) continue;
-      
-      // cardIndex는 이미 0-based, 나머지는 1-based이므로 -1
-      const index = field === 'cardIndex' ? value : value - 1;
-      const realId = cardIdMap[index];
-      
-      if (realId) {
-        return realId;
-      }
-    }
-  }
-  
-  // 명함이 1개뿐이면 그 명함으로 기본 설정
-  const keys = Object.keys(cardIdMap);
-  if (keys.length === 1) {
-    return cardIdMap[keys[0]];
-  }
-  
-  return null;
-}
-
-/**
- * linked_card_ids 문자열/배열을 실제 DB ID 문자열로 변환
- * @param {string|Array} linkedCardIds - LLM 생성 값 (예: "1,2" 또는 [1,2])
- * @param {Object} cardIdMap - {0: 실제DB_ID, ...}
- * @returns {string|null} 실제 DB ID 콤마 구분 문자열
- */
-function resolveLinkedCardIds(linkedCardIds, cardIdMap) {
-  if (!linkedCardIds) return null;
-  
-  let arr = [];
-  if (typeof linkedCardIds === 'string') {
-    arr = linkedCardIds.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
-  } else if (Array.isArray(linkedCardIds)) {
-    arr = linkedCardIds.map(n => parseInt(n)).filter(n => !isNaN(n));
-  }
-  
-  // 1-based를 0-based로 변환 후 cardIdMap에서 실제 ID 조회
-  const realIds = arr.map(id => cardIdMap[id - 1]).filter(Boolean);
-  return realIds.length > 0 ? realIds.join(',') : null;
-}
+import TimestampGenerator from "./timestamp-generator.js";
 
 /**
  * Step 1: 시나리오로 원본 테이블에 더미 데이터 생성
@@ -82,6 +27,39 @@ export async function generateDummyData(scenario, rawData = null) {
     // user_id는 항상 1로 고정 (기존 계정 사용)
     const userId = 1;
     
+    // TimestampGenerator 인스턴스 생성 및 기존 데이터 로드
+    const tsGen = new TimestampGenerator();
+    
+    // 기존 데이터의 시간 정보를 등록 (중복 방지용)
+    const [existingCards] = await connection.query(
+      `SELECT createdAt FROM business_cards WHERE userId = ?`,
+      [userId]
+    );
+    const [existingMemos] = await connection.query(
+      `SELECT created_at, updated_at FROM memo WHERE user_id = ?`,
+      [userId]
+    );
+    const [existingEvents] = await connection.query(
+      `SELECT startDate, endDate, createdAt FROM events WHERE userId = ?`,
+      [userId]
+    );
+    const [existingGifts] = await connection.query(
+      `SELECT purchaseDate, createdAt FROM gifts WHERE userId = ?`,
+      [userId]
+    );
+    const [existingChats] = await connection.query(
+      `SELECT createdAt FROM chats WHERE userId = ?`,
+      [userId]
+    );
+    
+    tsGen.registerExistingTimestamps({
+      cards: existingCards,
+      memos: existingMemos,
+      events: existingEvents,
+      gifts: existingGifts,
+      chats: existingChats
+    });
+    
     // ⚠️ userId=1이 users 테이블에 실제 존재하는지 확인
     const [userCheck] = await connection.query(
       `SELECT id FROM users WHERE id = ?`,
@@ -92,7 +70,7 @@ export async function generateDummyData(scenario, rawData = null) {
     }
     console.log(`사용자 ID 확인 완료: ${userId}`);
 
-    // 2. 명함 생성
+    // 2. 명함 생성 (시간 자동 할당)
     const cardIdMap = {};
     if (!generatedData.business_cards || generatedData.business_cards.length === 0) {
       throw new Error('business_cards 데이터가 없습니다. 최소 1개의 명함이 필요합니다.');
@@ -106,9 +84,12 @@ export async function generateDummyData(scenario, rawData = null) {
         throw new Error(`business_cards[${i}]: name 필드는 필수입니다.`);
       }
       
+      // 명함 생성 시간 자동 할당
+      const cardCreationTime = tsGen.generateCardCreationTime();
+      
       const [cardResult] = await connection.query(
-        `INSERT INTO business_cards (userId, name, position, company, phone, email, memo, gender, isFavorite, design)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO business_cards (userId, name, position, company, phone, email, memo, gender, isFavorite, design, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           userId,
           card.name.trim(),
@@ -120,20 +101,41 @@ export async function generateDummyData(scenario, rawData = null) {
           card.gender || null,
           card.isFavorite ? 1 : 0,
           card.design || "design-1",
+          cardCreationTime.toISOString(),
         ]
       );
       cardIdMap[i] = cardResult.insertId;
-      console.log(`명함 생성: index=${i} → DB id=${cardResult.insertId} (${card.name})`);
+      console.log(`명함 생성: index=${i} → DB id=${cardResult.insertId} (${card.name}) at ${cardCreationTime.toISOString()}`);
     }
 
-    // 3. 일정 생성
+    // 3. 일정 생성 (시간 자동 할당)
     let eventsCount = 0;
+    let eventTimes = [];
+    let firstCardTime = new Date(); // 기본값
+    
+    // 🔧 FIX: 실제로 생성된 첫 번째 명함의 시간 사용
+    if (Object.keys(cardIdMap).length > 0) {
+      const [firstCardData] = await connection.query(
+        `SELECT createdAt FROM business_cards WHERE id = ? LIMIT 1`,
+        [Object.values(cardIdMap)[0]]
+      );
+      if (firstCardData && firstCardData.length > 0) {
+        firstCardTime = new Date(firstCardData[0].createdAt);
+      }
+    }
+    
     if (generatedData.events) {
+      // 모든 일정의 시간을 미리 생성
+      eventTimes = tsGen.generateEventTimes(firstCardTime, generatedData.events.length);
+      
+      // 첫 번째 (유일한) 명함의 실제 DB ID 가져오기
+      const firstCardDbId = Object.values(cardIdMap)[0];
+      
       for (let eventIdx = 0; eventIdx < generatedData.events.length; eventIdx++) {
         const event = generatedData.events[eventIdx];
         
-        // linked_card_ids를 실제 DB ID로 변환
-        const linkedCardIds = resolveLinkedCardIds(event.linked_card_ids, cardIdMap);
+        // 🔧 간단하게: INSERT된 명함의 실제 DB ID 직접 사용
+        const linkedCardIds = String(firstCardDbId);
         
         // 필수 필드 검증
         if (!event.title) {
@@ -145,9 +147,21 @@ export async function generateDummyData(scenario, rawData = null) {
         const validCategories = ["미팅", "업무", "개인", "기타"];
         const category = validCategories.includes(event.category) ? event.category : "기타";
         
-        // 날짜 기본값 설정
-        const startDate = event.startDate || new Date().toISOString();
-        const endDate = event.endDate || startDate;
+        // 시간 자동 할당 (미리 생성된 시간 사용)
+        const eventTime = eventTimes[eventIdx] || {
+          startDate: new Date().toISOString(),
+          endDate: new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1시간 후
+        };
+
+        // participants 처리: 배열이면 문자열로 변환
+        let participantsStr = null;
+        if (event.participants) {
+          if (Array.isArray(event.participants)) {
+            participantsStr = event.participants.join(', ');
+          } else {
+            participantsStr = String(event.participants);
+          }
+        }
 
         await connection.query(
           `INSERT INTO events (userId, title, startDate, endDate, category, color, description, location, participants, memo, isAllDay, linked_card_ids)
@@ -155,35 +169,39 @@ export async function generateDummyData(scenario, rawData = null) {
           [
             userId,
             event.title,
-            startDate,
-            endDate,
+            eventTime.startDate,
+            eventTime.endDate,
             category,
             event.color || "#9ca3af",
             event.description || null,
             event.location || null,
-            event.participants || null,
+            participantsStr,
             event.memo || null,
             event.isAllDay ? 1 : 0,
             linkedCardIds,
           ]
         );
-        console.log(`일정 생성: event[${eventIdx}] → linked_card_ids=${linkedCardIds} (${event.title})`);
+        console.log(`일정 생성: event[${eventIdx}] → ${eventTime.startDate} - ${eventTime.endDate} (${event.title})`);
         eventsCount++;
       }
     }
 
-    // 4. 선물 생성
+    // 4. 선물 생성 (시간 자동 할당)
     let giftsCount = 0;
+    let giftTimes = [];
+    
     if (generatedData.gifts) {
+      // 모든 선물의 시간을 미리 생성 (채팅 + 구매 시간) - 이미 설정된 firstCardTime 사용
+      giftTimes = tsGen.generateGiftTimes(firstCardTime, generatedData.gifts.length);
+      
+      // 첫 번째 (유일한) 명함의 실제 DB ID 가져오기
+      const giftCardDbId = Object.values(cardIdMap)[0];
+      
       for (let giftIdx = 0; giftIdx < generatedData.gifts.length; giftIdx++) {
         const gift = generatedData.gifts[giftIdx];
         
-        // LLM 생성 cardId를 실제 DB ID로 변환
-        const cardId = resolveCardId(gift, cardIdMap);
-        if (!cardId) {
-          console.log(`스킵: gift[${giftIdx}] "${gift.giftName}", 명함 매핑 실패`, gift);
-          continue;
-        }
+        // 🔧 간단하게: INSERT된 명함의 실제 DB ID 직접 사용
+        const cardId = giftCardDbId;
 
         // 필수 필드 검증
         if (!gift.giftName) {
@@ -191,9 +209,12 @@ export async function generateDummyData(scenario, rawData = null) {
           continue;
         }
 
-        // purchaseDate 처리 (null이면 현재 날짜)
-        const purchaseDate = gift.purchaseDate || new Date().toISOString();
-        const year = gift.year || new Date(purchaseDate).getFullYear();
+        // 시간 자동 할당 (미리 생성된 시간 사용)
+        const giftTime = giftTimes[giftIdx] || {
+          purchaseDate: new Date().toISOString(),
+          chatTime: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() // 1일 전
+        };
+        const year = new Date(giftTime.purchaseDate).getFullYear();
 
         await connection.query(
           `INSERT INTO gifts (userId, cardId, giftName, giftDescription, price, category, purchaseDate, occasion, notes, year)
@@ -205,19 +226,22 @@ export async function generateDummyData(scenario, rawData = null) {
             gift.giftDescription || null,
             gift.price || 0,
             gift.category || '기타',
-            purchaseDate,
+            giftTime.purchaseDate,
             gift.occasion || '기타',
             gift.notes || null,
             year,
           ]
         );
-        console.log(`선물 생성: gift[${giftIdx}] → cardId=${cardId} (${gift.giftName})`);
+        console.log(`선물 생성: gift[${giftIdx}] → cardId=${cardId} at ${giftTime.purchaseDate} (${gift.giftName})`);
         giftsCount++;
       }
     }
 
-    // 5. 채팅 생성
+    // 5. 채팅 생성 (선물과 연동된 시간 사용, cardId 연결)
     let chatsCount = 0;
+    // 채팅에 연결할 cardId (선물과 동일한 명함)
+    const chatCardDbId = Object.values(cardIdMap)[0];
+    
     if (generatedData.chats) {
       for (let chatIdx = 0; chatIdx < generatedData.chats.length; chatIdx++) {
         const chat = generatedData.chats[chatIdx];
@@ -229,33 +253,37 @@ export async function generateDummyData(scenario, rawData = null) {
         }
         
         const messagesJson = JSON.stringify(chat.messages);
-        // createdAt이 있으면 사용, 없으면 현재 시간
-        const createdAt = chat.createdAt || new Date().toISOString();
+        
+        // 시간 자동 할당 (해당하는 선물의 채팅 시간 사용)
+        const chatTime = giftTimes[chatIdx] ? giftTimes[chatIdx].chatTime : 
+          new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(); // 최근 30일 내 랜덤
 
         await connection.query(
-          `INSERT INTO chats (userId, llmProvider, title, messages, isActive, createdAt)
-           VALUES (?, 'gpt', ?, ?, TRUE, ?)`,
-          [userId, chat.title || '선물 추천 대화', messagesJson, createdAt]
+          `INSERT INTO chats (userId, cardId, llmProvider, title, messages, isActive, createdAt)
+           VALUES (?, ?, 'gpt', ?, ?, TRUE, ?)`,
+          [userId, chatCardDbId, chat.title || '선물 추천 대화', messagesJson, chatTime]
         );
-        console.log(`채팅 생성: chat[${chatIdx}] (${chat.title || '선물 추천 대화'})`);
+        console.log(`채팅 생성: chat[${chatIdx}] → cardId=${chatCardDbId} at ${chatTime} (${chat.title || '선물 추천 대화'})`);
         chatsCount++;
       }
     }
 
-    // 6. 메모 생성 (시간순으로)
-    // LLM이 "memo" 또는 "memos"로 생성할 수 있음
+    // 6. 메모 생성 (일정과 연동된 시간 자동 할당)
     let memosCount = 0;
     const memoData = generatedData.memos || generatedData.memo || [];
+    
+    // 첫 번째 (유일한) 명함의 실제 DB ID 가져오기
+    const memoCardDbId = Object.values(cardIdMap)[0];
+    
     if (memoData.length > 0) {
+      // 일정들의 시간을 기준으로 메모 시간들 생성
+      const memoTimes = tsGen.generateMemoTimes(eventTimes, memoData.length);
+      
       for (let memoIdx = 0; memoIdx < memoData.length; memoIdx++) {
         const memo = memoData[memoIdx];
         
-        // LLM 생성 cardId를 실제 DB ID로 변환
-        const cardId = resolveCardId(memo, cardIdMap);
-        if (!cardId) {
-          console.log(`스킵: memo[${memoIdx}], 명함 매핑 실패`, memo);
-          continue;
-        }
+        // 🔧 간단하게: INSERT된 명함의 실제 DB ID 직접 사용
+        const cardId = memoCardDbId;
 
         // 필수 필드 검증
         if (!memo.content || memo.content.trim() === '') {
@@ -263,15 +291,18 @@ export async function generateDummyData(scenario, rawData = null) {
           continue;
         }
 
-        // createdAt 또는 created_at 사용
-        const createdAt = memo.createdAt || memo.created_at || new Date().toISOString();
+        // 시간 자동 할당 (미리 생성된 시간 사용)
+        const memoTime = memoTimes[memoIdx] || {
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
 
         await connection.query(
-          `INSERT INTO memo (user_id, business_card_id, content, created_at)
-           VALUES (?, ?, ?, ?)`,
-          [userId, cardId, memo.content.trim(), createdAt]
+          `INSERT INTO memo (user_id, business_card_id, content, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)`,
+          [userId, cardId, memo.content.trim(), memoTime.created_at, memoTime.updated_at]
         );
-        console.log(`메모 생성: memo[${memoIdx}] → cardId=${cardId}`);
+        console.log(`메모 생성: memo[${memoIdx}] → cardId=${cardId} at ${memoTime.created_at}`);
         memosCount++;
       }
     }
@@ -385,8 +416,10 @@ export async function populateSourceEvents(userId, cardIds = null, createdAfter 
     }
 
     // MEMO 처리
-    // 실제 존재하는 card_id 목록 (EVENT 처리에서도 사용)
-    const validCardIds = new Set(cards.map(c => c.id));
+    // 실제 존재하는 모든 card_id 목록 (userId의 모든 명함 - 필터와 무관하게)
+    const allCardsForUser = await query(`SELECT id FROM business_cards WHERE userId = ?`, [userId]);
+    const validCardIds = new Set(allCardsForUser.map(c => c.id));
+    console.log(`유효한 card_id 목록 (총 ${validCardIds.size}개):`, [...validCardIds]);
     
     const memoExisting = await getExisting("MEMO");
     const memos = await query(
@@ -424,7 +457,9 @@ export async function populateSourceEvents(userId, cardIds = null, createdAfter 
     // EVENT 처리
     const eventExisting = await getExisting("EVENT");
     const events = await query(`SELECT * FROM events WHERE userId = ?`, [userId]);
-    const cardMap = new Map(cards.map((c) => [c.id, c]));
+    // 모든 명함 정보를 가져와서 cardMap 생성 (필터와 무관하게)
+    const allCardsDetails = await query(`SELECT * FROM business_cards WHERE userId = ?`, [userId]);
+    const cardMap = new Map(allCardsDetails.map((c) => [c.id, c]));
     for (const event of events) {
       const linkedCardIds = parseLinkedCardIds(event.linked_card_ids);
       if (linkedCardIds.length === 0) continue;
@@ -489,7 +524,7 @@ export async function populateSourceEvents(userId, cardIds = null, createdAfter 
       results.gifts++;
     }
 
-    // CHAT 처리
+    // CHAT 처리 (cardId가 직접 저장되어 있으면 사용, 없으면 추론)
     const chatExisting = await getExisting("CHAT");
     const chats = await query(
       `SELECT * FROM chats WHERE userId = ? AND isActive = TRUE`,
@@ -499,8 +534,17 @@ export async function populateSourceEvents(userId, cardIds = null, createdAfter 
       // createdAfter 필터 (채팅은 createdAt 기준)
       if (!isCreatedAfter(chat.createdAt)) continue;
       
-      const inferredCardIds = inferCardIdsFromChat(chat, cards);
-      const chatCardIds = inferredCardIds.length > 0 ? inferredCardIds : cards.length > 0 ? [cards[0].id] : [];
+      // 🔧 cardId가 DB에 저장되어 있으면 직접 사용, 없으면(기존 데이터) 추론
+      let chatCardIds;
+      if (chat.cardId && chat.cardId > 0 && validCardIds.has(chat.cardId)) {
+        // cardId가 직접 저장되어 있는 경우 (신규 데이터)
+        chatCardIds = [chat.cardId];
+      } else {
+        // cardId가 없는 경우 (기존 데이터) - 이름 기반 추론 fallback
+        const inferredCardIds = inferCardIdsFromChat(chat, allCardsDetails);
+        chatCardIds = inferredCardIds.length > 0 ? inferredCardIds : allCardsDetails.length > 0 ? [allCardsDetails[0].id] : [];
+      }
+      
       for (const cardId of chatCardIds) {
         // card_id가 유효하지 않거나 실제 business_cards에 존재하지 않으면 스킵
         if (!cardId || cardId <= 0 || !validCardIds.has(cardId)) {
@@ -511,7 +555,7 @@ export async function populateSourceEvents(userId, cardIds = null, createdAfter 
         
         const key = `${chat.id}:${cardId}`;
         if (chatExisting.has(key)) continue;
-        const card = cards.find((c) => c.id === cardId);
+        const card = cardMap.get(cardId);
         const rawText = buildRawText("CHAT", chat, card);
         await insertSourceEvent({
           userId: chat.userId,
