@@ -5,6 +5,7 @@ import {
   detectCardRegionWithVisionAPI 
 } from '../utils/imagePreprocessor.js';
 import sharp from 'sharp';
+import { processLLMChat } from './llm.service.js';
 
 /**
  * Process OCR from base64 image
@@ -104,7 +105,7 @@ const processWithGoogleVision = async (base64Data) => {
 
     // Parse text to extract business card information
     const fullText = textAnnotations[0].description;
-    return parseBusinessCardText(fullText);
+    return await parseBusinessCardText(fullText);
   } catch (error) {
     logger.error('Google Vision API Error', error);
     // Fallback to mock
@@ -113,10 +114,125 @@ const processWithGoogleVision = async (base64Data) => {
 };
 
 /**
- * Parse OCR text to extract business card fields
- * 프론트엔드와 유사한 개선된 파싱 로직 적용
+ * Parse OCR text using GPT to extract business card fields
+ * GPT를 사용하여 명함 정보를 추출합니다
  */
-const parseBusinessCardText = (text) => {
+const parseBusinessCardTextWithGPT = async (text) => {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      logger.debug('GPT 파싱: OPENAI_API_KEY가 없어 정규식 파싱으로 폴백');
+      return null;
+    }
+
+    logger.debug('🤖 [GPT OCR 파싱 시작]');
+    
+    const prompt = `당신은 명함 텍스트에서 정보를 추출하는 전문가입니다. 아래 텍스트를 분석하여 명함 정보를 JSON 형식으로 추출해주세요.
+
+텍스트:
+"""
+${text}
+"""
+
+다음 필드들을 추출해주세요:
+- name: 이름 (한글 2-4글자 또는 영문 이름)
+- position: 직책 (부장, 대표이사, Manager, CEO 등)
+- company: 회사명
+- phone: 전화번호 (010-1234-5678 형식)
+- email: 이메일 주소
+- memo: 기타 메모 정보
+
+응답은 반드시 다음 JSON 형식으로만 반환해주세요 (다른 설명 없이):
+{
+  "name": "이름 또는 null",
+  "position": "직책 또는 null",
+  "company": "회사명 또는 null",
+  "phone": "전화번호 또는 null",
+  "email": "이메일 또는 null",
+  "memo": "메모 또는 null"
+}
+
+값이 없으면 null을 사용하고, 빈 문자열 대신 null을 반환하세요.`;
+
+    const messages = [
+      {
+        role: 'system',
+        content: '당신은 명함 텍스트 분석 전문가입니다. 주어진 텍스트에서 명함 정보를 정확하게 추출하여 JSON 형식으로 반환합니다.'
+      },
+      {
+        role: 'user',
+        content: prompt
+      }
+    ];
+
+    const gptResponse = await processLLMChat(messages, 'gpt');
+    
+    // JSON 추출 (응답에 마크다운 코드 블록이 있을 수 있음)
+    let jsonStr = gptResponse.trim();
+    
+    // ```json 또는 ``` 코드 블록 제거
+    jsonStr = jsonStr.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    
+    // JSON 파싱
+    const parsedData = JSON.parse(jsonStr);
+    
+    // 결과 형식 맞추기
+    const result = {
+      rawText: text,
+      name: parsedData.name && parsedData.name !== 'null' ? parsedData.name : undefined,
+      position: parsedData.position && parsedData.position !== 'null' ? parsedData.position : undefined,
+      company: parsedData.company && parsedData.company !== 'null' ? parsedData.company : undefined,
+      phone: parsedData.phone && parsedData.phone !== 'null' ? parsedData.phone : undefined,
+      email: parsedData.email && parsedData.email !== 'null' ? parsedData.email : undefined,
+      memo: parsedData.memo && parsedData.memo !== 'null' ? parsedData.memo : undefined,
+    };
+
+    logger.debug('✅ [GPT OCR 파싱 완료]', {
+      이름: result.name || '(없음)',
+      직책: result.position || '(없음)',
+      회사: result.company || '(없음)',
+      전화: result.phone || '(없음)',
+      이메일: result.email || '(없음)',
+      메모: result.memo || '(없음)',
+    });
+
+    return result;
+  } catch (error) {
+    logger.warn('GPT OCR 파싱 실패, 정규식 파싱으로 폴백', error);
+    return null;
+  }
+};
+
+/**
+ * Parse OCR text to extract business card fields
+ * GPT를 우선 시도하고, 실패 시 정규식 기반 파싱으로 폴백
+ */
+const parseBusinessCardText = async (text) => {
+  if (!text || text.trim() === '') {
+    logger.warn('OCR 파싱: 텍스트가 비어있습니다');
+    return {
+      rawText: text,
+      name: undefined,
+      position: undefined,
+      company: undefined,
+      phone: undefined,
+      email: undefined,
+      memo: undefined,
+    };
+  }
+
+  // 1. GPT 파싱 시도
+  try {
+    const gptResult = await parseBusinessCardTextWithGPT(text);
+    if (gptResult) {
+      return gptResult;
+    }
+  } catch (error) {
+    logger.warn('GPT 파싱 시도 중 오류 발생, 정규식 파싱으로 폴백', error);
+  }
+
+  // 2. 폴백: 정규식 기반 파싱 (기존 로직)
+  logger.debug('📝 [정규식 OCR 파싱 시작]');
+  
   // rawText 추가
   const result = {
     rawText: text,
@@ -127,11 +243,6 @@ const parseBusinessCardText = (text) => {
     email: '',
     memo: '',
   };
-
-  if (!text || text.trim() === '') {
-    logger.warn('OCR 파싱: 텍스트가 비어있습니다');
-    return result;
-  }
 
   const lines = text.split(/\r?\n/).filter(line => line.trim());
   logger.debug('OCR 파싱 시작', { 
@@ -279,7 +390,7 @@ const parseBusinessCardText = (text) => {
     memo: result.memo || undefined,
   };
 
-  logger.debug('OCR 파싱 완료', {
+  logger.debug('📝 [정규식 OCR 파싱 완료]', {
     이름: parsedResult.name || '(없음)',
     직책: parsedResult.position || '(없음)',
     회사: parsedResult.company || '(없음)',
