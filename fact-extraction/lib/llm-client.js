@@ -543,7 +543,7 @@ ${scenario}
 **⚠️ 절대 주의사항**: 
 - **시나리오에 나온 정확한 인물 정보(이름, 직책, 회사, 특성)를 사용하세요!**
 - **예시 값(박서연, 블루벤처스 등)을 그대로 사용하면 안 됩니다!**
-- business_cards에서 `design` 필드는 **절대 포함하지 마세요** (서버에서 자동으로 "design-1"로 설정됨).
+- business_cards에서 'design' 필드는 **절대 포함하지 마세요** (서버에서 자동으로 "design-1"로 설정됨).
 - business_cards, events, gifts, chats, memo에서 userId, user_id는 생략 (서버에서 자동 설정).
 - cardId, business_card_id는 1부터 시작 (첫 번째 명함 = 1).
 - JSON만 출력하고 다른 설명은 포함하지 마세요.
