@@ -371,6 +371,7 @@ app.post("/api/scenario/preview", async (req, res) => {
 
     console.log("=== 더미 데이터 미리보기 생성 ===");
     console.log("시나리오 길이:", scenario.length);
+    console.log("시나리오 내용 (앞 200자):", scenario.substring(0, 200));
 
     // LLM으로 데이터만 생성 (DB 저장 안함)
     const { generateDummyData: llmGenerateDummyData } = await import("./lib/llm-client.js");
