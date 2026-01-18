@@ -100,7 +100,7 @@ export async function generateDummyData(scenario, rawData = null) {
           card.memo || null,
           card.gender || null,
           card.isFavorite ? 1 : 0,
-          card.design || "design-1",
+          "design-1", // 항상 고정값
           cardCreationTime.toISOString(),
         ]
       );
