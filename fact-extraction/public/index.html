@@ -1257,7 +1257,11 @@
                 document.getElementById('finishGroup').style.display = 'flex';
                 addLog('🎉 완료!', 'success');
 
-                const anaRes = await fetch(`${API}/analyze`);
+                // 분포 분석 (해당 cardIds에 대한 데이터만 분석)
+                const analyzeUrl = cardIds && cardIds.length > 0
+                    ? `${API}/analyze?cardIds=${cardIds.join(',')}`
+                    : `${API}/analyze`;
+                const anaRes = await fetch(analyzeUrl);
                 if (anaRes.ok) updateCharts(await anaRes.json());
             } catch (e) {
                 addLog(`❌ 오류: ${e.message}`, 'error');

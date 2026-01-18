@@ -688,16 +688,28 @@ app.get("/api/scenario/stats", async (req, res) => {
 
 /**
  * 분포 분석 API
- * GET /api/scenario/analyze
+ * GET /api/scenario/analyze?cardIds=1,2,3 (optional)
  */
 app.get("/api/scenario/analyze", async (req, res) => {
   try {
+    // cardIds 파라미터 파싱 (쉼표로 구분된 문자열 또는 배열)
+    let cardIds = null;
+    if (req.query.cardIds) {
+      if (Array.isArray(req.query.cardIds)) {
+        cardIds = req.query.cardIds.map(id => parseInt(id)).filter(id => !isNaN(id));
+      } else if (typeof req.query.cardIds === 'string') {
+        cardIds = req.query.cardIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+      }
+      if (cardIds.length === 0) cardIds = null;
+    }
+
     const result = {
       generatedAt: new Date().toISOString(),
-      memo: await analyzeMemos(),
-      chat: await analyzeChats(),
-      sourceEvent: await analyzeSourceEvents(),
-      fact: await analyzeFacts(),
+      cardIds: cardIds, // 분석 대상 cardIds 추가 (디버깅용)
+      memo: await analyzeMemos(cardIds),
+      chat: await analyzeChats(cardIds),
+      sourceEvent: await analyzeSourceEvents(cardIds),
+      fact: await analyzeFacts(cardIds),
       warnings: [],
     };
 
@@ -793,8 +805,14 @@ function analyzeWordFrequency(texts, topN = 20) {
 }
 
 // 메모 분석
-async function analyzeMemos() {
-  const memos = await query(`SELECT id, content, business_card_id FROM memo`);
+async function analyzeMemos(cardIds = null) {
+  let queryStr = `SELECT id, content, business_card_id FROM memo`;
+  let params = [];
+  if (cardIds && cardIds.length > 0) {
+    queryStr += ` WHERE business_card_id IN (${cardIds.map(() => '?').join(',')})`;
+    params = cardIds;
+  }
+  const memos = await query(queryStr, params);
   const contents = memos.map(m => m.content);
   const lengthStats = calculateLengthStats(contents);
   const duplicates = calculateDuplicateRate(contents);
@@ -817,8 +835,14 @@ async function analyzeMemos() {
 }
 
 // 채팅 분석
-async function analyzeChats() {
-  const chats = await query(`SELECT id, messages, title FROM chats WHERE isActive = TRUE`);
+async function analyzeChats(cardIds = null) {
+  let queryStr = `SELECT id, messages, title, cardId FROM chats WHERE isActive = TRUE`;
+  let params = [];
+  if (cardIds && cardIds.length > 0) {
+    queryStr += ` AND cardId IN (${cardIds.map(() => '?').join(',')})`;
+    params = cardIds;
+  }
+  const chats = await query(queryStr, params);
   
   const userPrompts = [];
   const additionalInfos = [];
@@ -864,12 +888,18 @@ async function analyzeChats() {
 }
 
 // Source Event 분석
-async function analyzeSourceEvents() {
-  const events = await query(`
+async function analyzeSourceEvents(cardIds = null) {
+  let queryStr = `
     SELECT source_type, is_processed, COUNT(*) as count
     FROM source_event
-    GROUP BY source_type, is_processed
-  `);
+  `;
+  let params = [];
+  if (cardIds && cardIds.length > 0) {
+    queryStr += ` WHERE card_id IN (${cardIds.map(() => '?').join(',')})`;
+    params = cardIds;
+  }
+  queryStr += ` GROUP BY source_type, is_processed`;
+  const events = await query(queryStr, params);
 
   const distribution = {};
   for (const row of events) {
@@ -887,12 +917,18 @@ async function analyzeSourceEvents() {
 }
 
 // Fact 분석
-async function analyzeFacts() {
-  const facts = await query(`
+async function analyzeFacts(cardIds = null) {
+  let queryStr = `
     SELECT ef.*, bc.name as card_name
     FROM extracted_fact ef
     JOIN business_cards bc ON ef.card_id = bc.id
-  `);
+  `;
+  let params = [];
+  if (cardIds && cardIds.length > 0) {
+    queryStr += ` WHERE ef.card_id IN (${cardIds.map(() => '?').join(',')})`;
+    params = cardIds;
+  }
+  const facts = await query(queryStr, params);
 
   if (facts.length === 0) {
     return { type: 'fact', count: 0 };
