@@ -15,6 +15,7 @@ import {
 } from "./lib/scenario-pipeline.js";
 import { generateScenarioOptions } from "./lib/llm-client.js";
 import { query, getConnection, closePool } from "./lib/db.js";
+import TimestampGenerator from "./lib/timestamp-generator.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -229,39 +230,87 @@ app.post("/api/scenario/confirm-for-card", async (req, res) => {
     
     // ⚠️ cardId가 실제 존재하는지 확인
     const [cardCheck] = await connection.query(
-      `SELECT id, name FROM business_cards WHERE id = ? AND userId = ?`,
+      `SELECT id, name, createdAt FROM business_cards WHERE id = ? AND userId = ?`,
       [cardId, userId]
     );
     if (!cardCheck || cardCheck.length === 0) {
       throw new Error(`cardId=${cardId}가 business_cards에 존재하지 않습니다.`);
     }
-    console.log(`명함 확인 완료: ${cardCheck[0].name} (id=${cardId})`);
+    const cardCreationTime = new Date(cardCheck[0].createdAt);
+    console.log(`명함 확인 완료: ${cardCheck[0].name} (id=${cardId}, 생성일: ${cardCreationTime.toISOString()})`);
+    
+    // ⚠️ TimestampGenerator 초기화 및 기존 데이터 로드
+    const tsGen = new TimestampGenerator();
+    const [existingMemos] = await connection.query(
+      `SELECT created_at, updated_at FROM memo WHERE user_id = ? AND business_card_id = ?`,
+      [userId, cardId]
+    );
+    const [existingEvents] = await connection.query(
+      `SELECT startDate, endDate, createdAt FROM events WHERE userId = ? AND FIND_IN_SET(?, linked_card_ids) > 0`,
+      [userId, cardId]
+    );
+    const [existingGifts] = await connection.query(
+      `SELECT purchaseDate, createdAt FROM gifts WHERE userId = ? AND cardId = ?`,
+      [userId, cardId]
+    );
+    const [existingChats] = await connection.query(
+      `SELECT createdAt FROM chats WHERE userId = ? AND cardId = ?`,
+      [userId, cardId]
+    );
+    
+    tsGen.registerExistingTimestamps({
+      cards: [{ createdAt: cardCreationTime }],
+      memos: existingMemos,
+      events: existingEvents,
+      gifts: existingGifts,
+      chats: existingChats
+    });
     
     let memosCount = 0, eventsCount = 0, giftsCount = 0, chatsCount = 0;
 
-    // 메모 저장
-    for (const memo of (data.memos || [])) {
+    // ⚠️ 기준 시간 결정: 기존 마지막 이벤트가 있으면 그것을 기준, 없으면 명함 생성일 기준
+    let baseTime = cardCreationTime;
+    if (existingEvents && existingEvents.length > 0) {
+      // 마지막 이벤트의 endDate를 기준으로 사용 (가장 최근)
+      const lastEvent = existingEvents.sort((a, b) => new Date(b.endDate || b.startDate) - new Date(a.endDate || a.startDate))[0];
+      baseTime = new Date(lastEvent.endDate || lastEvent.startDate || cardCreationTime);
+      console.log(`기존 마지막 이벤트 기준: ${baseTime.toISOString()}`);
+    } else {
+      console.log(`명함 생성일 기준: ${baseTime.toISOString()}`);
+    }
+
+    // ⚠️ 일정 시간 자동 생성 (기존 데이터 이후로 생성)
+    const eventTimes = tsGen.generateEventTimes(baseTime, (data.events || []).length);
+    const memoTimes = tsGen.generateMemoTimes(eventTimes, (data.memos || []).length);
+    const giftTimes = tsGen.generateGiftTimes(baseTime, (data.gifts || []).length);
+
+    // 메모 저장 (TimestampGenerator 사용)
+    for (let i = 0; i < (data.memos || []).length; i++) {
+      const memo = data.memos[i];
       if (!memo.content || memo.content.trim() === '') {
         console.log(`스킵: memo, content가 비어있음`);
         continue;
       }
+      const memoTime = memoTimes[i] || { created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       await connection.query(
         `INSERT INTO memo (user_id, business_card_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-        [userId, cardId, memo.content.trim(), memo.created_at || new Date(), memo.updated_at || new Date()]
+        [userId, cardId, memo.content.trim(), memoTime.created_at, memoTime.updated_at]
       );
-      console.log(`메모 저장: cardId=${cardId}`);
+      console.log(`메모 저장: cardId=${cardId} at ${memoTime.created_at}`);
       memosCount++;
     }
 
-    // 일정 저장
-    for (const event of (data.events || [])) {
+    // 일정 저장 (TimestampGenerator 사용)
+    for (let i = 0; i < (data.events || []).length; i++) {
+      const event = data.events[i];
       if (!event.title) {
         console.log(`스킵: event, title이 없음`);
         continue;
       }
       const validCategory = ["미팅", "식사", "출장", "통화", "기타"].includes(event.category) ? event.category : "기타";
-      const startDate = event.startDate || new Date().toISOString();
-      const endDate = event.endDate || startDate;
+      const eventTime = eventTimes[i] || { startDate: new Date().toISOString(), endDate: new Date(Date.now() + 60*60*1000).toISOString() };
+      const startDate = eventTime.startDate;
+      const endDate = eventTime.endDate;
       
       await connection.query(
         `INSERT INTO events (userId, title, startDate, endDate, category, description, location, participants, memo, notification, isAllDay, linked_card_ids, color)
@@ -269,17 +318,19 @@ app.post("/api/scenario/confirm-for-card", async (req, res) => {
         [userId, event.title, startDate, endDate, validCategory, event.description || null, event.location || null,
          event.participants || null, event.memo || null, event.notification || 30, event.isAllDay ? 1 : 0, String(cardId), event.color || "#4285F4"]
       );
-      console.log(`일정 저장: linked_card_ids=${cardId} (${event.title})`);
+      console.log(`일정 저장: linked_card_ids=${cardId} (${event.title}) at ${startDate} - ${endDate}`);
       eventsCount++;
     }
 
-    // 선물 저장
-    for (const gift of (data.gifts || [])) {
+    // 선물 저장 (TimestampGenerator 사용)
+    for (let i = 0; i < (data.gifts || []).length; i++) {
+      const gift = data.gifts[i];
       if (!gift.giftName) {
         console.log(`스킵: gift, giftName이 없음`);
         continue;
       }
-      const purchaseDate = gift.purchaseDate || new Date().toISOString();
+      const giftTime = giftTimes[i] || { purchaseDate: new Date().toISOString(), chatTime: new Date().toISOString() };
+      const purchaseDate = giftTime.purchaseDate;
       const year = gift.year || new Date(purchaseDate).getFullYear();
       
       await connection.query(
@@ -288,22 +339,26 @@ app.post("/api/scenario/confirm-for-card", async (req, res) => {
         [userId, cardId, gift.giftName, gift.giftDescription || null, gift.price || 0, gift.category || '기타',
          purchaseDate, gift.occasion || '기타', gift.notes || null, year]
       );
-      console.log(`선물 저장: cardId=${cardId} (${gift.giftName})`);
+      console.log(`선물 저장: cardId=${cardId} (${gift.giftName}) at ${purchaseDate}`);
       giftsCount++;
     }
 
-    // 채팅 저장 (cardId 연결)
-    for (const chat of (data.chats || [])) {
+    // 채팅 저장 (cardId 연결, TimestampGenerator 사용)
+    for (let i = 0; i < (data.chats || []).length; i++) {
+      const chat = data.chats[i];
       if (!chat.messages || !Array.isArray(chat.messages)) {
         console.log(`스킵: chat, messages가 없거나 배열이 아님`);
         continue;
       }
+      // 선물 시간이 있으면 그것을 사용, 없으면 자동 생성
+      const chatTime = giftTimes[i]?.chatTime || tsGen.generateRealisticTimestamp(cardCreationTime, 30, 90).toISOString();
+      
       await connection.query(
         `INSERT INTO chats (userId, cardId, llmProvider, title, messages, isActive, createdAt)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [userId, cardId, "gpt", chat.title || '선물 추천 대화', JSON.stringify(chat.messages), 1, chat.createdAt || new Date()]
+        [userId, cardId, "gpt", chat.title || '선물 추천 대화', JSON.stringify(chat.messages), 1, chatTime]
       );
-      console.log(`채팅 저장: cardId=${cardId} (${chat.title || '선물 추천 대화'})`);
+      console.log(`채팅 저장: cardId=${cardId} (${chat.title || '선물 추천 대화'}) at ${chatTime}`);
       chatsCount++;
     }
 

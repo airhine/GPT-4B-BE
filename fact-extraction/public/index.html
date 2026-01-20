@@ -1256,23 +1256,7 @@
             </div>
             <div class="preview-card-body">
               ${renderSection('📝 메모', data.memos, m => `<div class="preview-item"><div class="preview-item-title">${(m.content || '').substring(0, 60)}...</div></div>`)}
-              ${renderSection('📅 일정', data.events, e => {
-                    const formatDateTime = (dt) => {
-                        if (!dt) return 'NULL';
-                        try {
-                            const d = new Date(dt);
-                            return d.toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-                        } catch { return dt; }
-                    };
-                    const startStr = formatDateTime(e.startDate);
-                    const endStr = formatDateTime(e.endDate);
-                    const statusBadge = !e.startDate || !e.endDate
-                        ? '<span style="color: var(--accent-red); font-size: 0.7rem;">❌ NULL</span>'
-                        : new Date(e.startDate) >= new Date(e.endDate)
-                            ? '<span style="color: var(--accent-red); font-size: 0.7rem;">❌ 오류</span>'
-                            : '<span style="color: var(--accent-green); font-size: 0.7rem;">✓</span>';
-                    return `<div class="preview-item"><div class="preview-item-title">${e.title} ${statusBadge}</div><div class="preview-item-meta">${e.category} | 시작: ${startStr} | 종료: ${endStr}</div></div>`;
-                })}
+              ${renderSection('📅 일정', data.events, renderEventItem)}
               ${renderSection('🎁 선물', data.gifts, g => `<div class="preview-item"><div class="preview-item-title">${g.giftName}</div><div class="preview-item-meta">${g.occasion} | ${(g.price || 0).toLocaleString()}원</div></div>`)}
               ${renderSection('💬 채팅', data.chats, c => `<div class="preview-item"><div class="preview-item-title">${c.title}</div></div>`)}
             </div>
@@ -1284,6 +1268,26 @@
         function renderSection(title, items, renderItem) {
             if (!items || items.length === 0) return '';
             return `<div class="preview-section"><div class="preview-section-title">${title} <span class="preview-section-count">${items.length}</span></div>${items.map(renderItem).join('')}</div>`;
+        }
+
+        // 일정 렌더링 헬퍼 함수 (startDate/endDate 포함)
+        function formatDateTime(dt) {
+            if (!dt) return 'NULL';
+            try {
+                const d = new Date(dt);
+                return d.toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+            } catch { return dt; }
+        }
+
+        function renderEventItem(e) {
+            const startStr = formatDateTime(e.startDate);
+            const endStr = formatDateTime(e.endDate);
+            const statusBadge = !e.startDate || !e.endDate
+                ? '<span style="color: var(--accent-red); font-size: 0.7rem;">❌ NULL</span>'
+                : new Date(e.startDate) >= new Date(e.endDate)
+                    ? '<span style="color: var(--accent-red); font-size: 0.7rem;">❌ 오류</span>'
+                    : '<span style="color: var(--accent-green); font-size: 0.7rem;">✓</span>';
+            return `<div class="preview-item"><div class="preview-item-title">${e.title} ${statusBadge}</div><div class="preview-item-meta">${e.category || '기타'} | 시작: ${startStr} | 종료: ${endStr}</div></div>`;
         }
 
         document.getElementById('backToInput').addEventListener('click', () => {
