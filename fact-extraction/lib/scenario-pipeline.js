@@ -157,10 +157,19 @@ export async function generateDummyData(scenario, rawData = null) {
         const category = validCategories.includes(event.category) ? event.category : "기타";
         
         // 시간 자동 할당 (미리 생성된 시간 사용)
-        const eventTime = eventTimes[eventIdx] || {
-          startDate: new Date().toISOString(),
-          endDate: new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1시간 후
-        };
+        const eventTime = eventTimes[eventIdx];
+        
+        // ⚠️ eventTime이 없거나 startDate/endDate가 없으면 에러 (fallback 제거)
+        if (!eventTime || !eventTime.startDate || !eventTime.endDate) {
+          console.error(`❌ 이벤트 시간 생성 실패: eventIdx=${eventIdx}, eventTimes.length=${eventTimes.length}, eventTime=`, eventTime);
+          throw new Error(`이벤트 시간 생성 실패: eventIdx=${eventIdx}, eventTime이 없거나 startDate/endDate가 없습니다.`);
+        }
+        
+        // ⚠️ startDate/endDate 검증
+        if (!eventTime.startDate || !eventTime.endDate) {
+          console.error(`❌ 이벤트 시간 값 없음: startDate=${eventTime.startDate}, endDate=${eventTime.endDate}`);
+          throw new Error(`이벤트 시간 값 없음: startDate=${eventTime.startDate}, endDate=${eventTime.endDate}`);
+        }
 
         // participants 처리: 배열이면 문자열로 변환
         let participantsStr = null;

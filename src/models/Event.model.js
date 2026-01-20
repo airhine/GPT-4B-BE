@@ -16,8 +16,11 @@ class Event {
     const [rows] = await pool.query(query, params);
     
     // Convert participants and linked_card_ids for each event
+    // ⚠️ startDate/endDate를 명시적으로 ISO 문자열로 변환 (null 체크 포함)
     return rows.map(event => ({
       ...event,
+      startDate: event.startDate ? (event.startDate instanceof Date ? event.startDate.toISOString() : new Date(event.startDate).toISOString()) : null,
+      endDate: event.endDate ? (event.endDate instanceof Date ? event.endDate.toISOString() : new Date(event.endDate).toISOString()) : null,
       participants: event.participants ? event.participants.split(', ').filter(p => p) : [],
       linkedCardIds: event.linked_card_ids ? event.linked_card_ids.split(',').map(id => parseInt(id)).filter(id => !isNaN(id)) : []
     }));
@@ -157,6 +160,8 @@ class Event {
     const [rows] = await pool.query(query, [userId, now, targetTime]);
     return rows.map(row => ({
       ...row,
+      startDate: row.startDate ? (row.startDate instanceof Date ? row.startDate.toISOString() : new Date(row.startDate).toISOString()) : null,
+      endDate: row.endDate ? (row.endDate instanceof Date ? row.endDate.toISOString() : new Date(row.endDate).toISOString()) : null,
       participants: row.participants ? row.participants.split(', ').filter(p => p) : [],
       linkedCardIds: row.linked_card_ids ? row.linked_card_ids.split(',').map(id => parseInt(id)).filter(id => !isNaN(id)) : [],
       linkedCards: row.card_ids ? row.card_ids.split(',').map((id, index) => ({
@@ -191,6 +196,8 @@ class Event {
     const [rows] = await pool.query(query, [userId, pastTime, now]);
     return rows.map(row => ({
       ...row,
+      startDate: row.startDate ? (row.startDate instanceof Date ? row.startDate.toISOString() : new Date(row.startDate).toISOString()) : null,
+      endDate: row.endDate ? (row.endDate instanceof Date ? row.endDate.toISOString() : new Date(row.endDate).toISOString()) : null,
       participants: row.participants ? row.participants.split(', ').filter(p => p) : [],
       linkedCardIds: row.linked_card_ids ? row.linked_card_ids.split(',').map(id => parseInt(id)).filter(id => !isNaN(id)) : [],
       linkedCards: row.card_ids ? row.card_ids.split(',').map((id, index) => ({
@@ -222,6 +229,8 @@ class Event {
     const row = rows[0];
     return {
       ...row,
+      startDate: row.startDate ? (row.startDate instanceof Date ? row.startDate.toISOString() : new Date(row.startDate).toISOString()) : null,
+      endDate: row.endDate ? (row.endDate instanceof Date ? row.endDate.toISOString() : new Date(row.endDate).toISOString()) : null,
       participants: row.participants ? row.participants.split(', ').filter(p => p) : [],
       linkedCardIds: row.linked_card_ids ? row.linked_card_ids.split(',').map(id => parseInt(id)).filter(id => !isNaN(id)) : [],
       linkedCards: row.card_ids ? row.card_ids.split(',').map((id, index) => ({

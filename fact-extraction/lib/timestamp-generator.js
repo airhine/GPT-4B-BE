@@ -9,7 +9,7 @@
 export class TimestampGenerator {
   constructor() {
     this.usedTimestamps = new Set();
-    this.baseDate = new Date('2024-01-01T00:00:00.000Z');
+    this.baseDate = new Date('2021-01-01T00:00:00.000Z');
     this.maxDate = new Date('2026-01-26T23:59:59.999Z');
   }
 

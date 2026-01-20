@@ -308,9 +308,22 @@ app.post("/api/scenario/confirm-for-card", async (req, res) => {
         continue;
       }
       const validCategory = ["미팅", "식사", "출장", "통화", "기타"].includes(event.category) ? event.category : "기타";
-      const eventTime = eventTimes[i] || { startDate: new Date().toISOString(), endDate: new Date(Date.now() + 60*60*1000).toISOString() };
+      const eventTime = eventTimes[i];
+      
+      // ⚠️ eventTime이 없거나 startDate/endDate가 없으면 에러 (fallback 제거)
+      if (!eventTime || !eventTime.startDate || !eventTime.endDate) {
+        console.error(`❌ 이벤트 시간 생성 실패: eventIdx=${i}, eventTimes.length=${eventTimes.length}, eventTime=`, eventTime);
+        throw new Error(`이벤트 시간 생성 실패: eventIdx=${i}, eventTime이 없거나 startDate/endDate가 없습니다.`);
+      }
+      
       const startDate = eventTime.startDate;
       const endDate = eventTime.endDate;
+      
+      // ⚠️ startDate/endDate 최종 검증
+      if (!startDate || !endDate) {
+        console.error(`❌ 이벤트 시간 값 없음: startDate=${startDate}, endDate=${endDate}`);
+        throw new Error(`이벤트 시간 값 없음: startDate=${startDate}, endDate=${endDate}`);
+      }
       
       await connection.query(
         `INSERT INTO events (userId, title, startDate, endDate, category, description, location, participants, memo, notification, isAllDay, linked_card_ids, color)
