@@ -106,8 +106,8 @@ export class TimestampGenerator {
     const usedDates = new Set(); // 같은 날짜 중복 방지용
     
     for (let i = 0; i < count; i++) {
-      // 이전 일정으로부터 최소 7일, 최대 30일 후 (더 넓게 분산)
-      let startDate = this.generateRealisticTimestamp(lastEventTime, 7, 30);
+      // 이전 일정으로부터 최소 7일, 최대 60일 후 (넓게 분산)
+      let startDate = this.generateRealisticTimestamp(lastEventTime, 7, 60);
       
       // 같은 날짜에 이미 이벤트가 있는지 체크 (날짜만 비교)
       let dateKey = this.getDateKey(startDate);
@@ -123,8 +123,9 @@ export class TimestampGenerator {
       if (i > 0 && events.length > 0) {
         const prevStartTime = new Date(events[events.length - 1].startDate);
         const minDiff = 7 * 24 * 60 * 60 * 1000; // 최소 7일
+        const maxDiff = 60 * 24 * 60 * 60 * 1000; // 최대 60일
         if (startDate.getTime() - prevStartTime.getTime() < minDiff) {
-          startDate = new Date(prevStartTime.getTime() + minDiff + Math.random() * 14 * 24 * 60 * 60 * 1000); // 7~21일 후
+          startDate = new Date(prevStartTime.getTime() + minDiff + Math.random() * 53 * 24 * 60 * 60 * 1000); // 7~60일 후
           dateKey = this.getDateKey(startDate);
           // 같은 날짜 체크 다시 수행
           while (usedDates.has(dateKey) && attempts < 50) {
@@ -142,18 +143,31 @@ export class TimestampGenerator {
       // 날짜 등록
       usedDates.add(dateKey);
       
+      // ⚠️ startDate를 usedTimestamps에 추가 (endDate와 겹치지 않도록)
+      // generateRealisticTimestamp에서 이미 추가되었을 수 있지만, 재조정된 경우를 위해 다시 추가
+      if (!this.usedTimestamps.has(startDate.getTime())) {
+        this.usedTimestamps.add(startDate.getTime());
+      }
+      
       // 1~3시간 후 종료 (최소 1시간 보장)
       const duration = (1 + Math.random() * 2) * 60 * 60 * 1000; // 1-3시간
       let endDate = new Date(startDate.getTime() + duration);
       
-      // endDate가 startDate와 최소 30분 이상 차이나도록 보장
-      const minDuration = 30 * 60 * 1000; // 30분
+      // endDate가 startDate와 최소 1시간 이상 차이나도록 보장 (30분은 너무 짧음)
+      const minDuration = 60 * 60 * 1000; // 최소 1시간
       if (endDate.getTime() - startDate.getTime() < minDuration) {
-        endDate = new Date(startDate.getTime() + minDuration + Math.random() * 2.5 * 60 * 60 * 1000);
+        endDate = new Date(startDate.getTime() + minDuration + Math.random() * 2 * 60 * 60 * 1000); // 1-3시간
       }
       
-      // endDate도 고유성 보장
+      // endDate도 고유성 보장 (startDate와 겹치지 않도록)
       endDate = this.ensureUnique(endDate);
+      
+      // ⚠️ endDate가 startDate보다 확실히 큰지 다시 한 번 보장
+      if (endDate.getTime() <= startDate.getTime()) {
+        endDate = new Date(startDate.getTime() + minDuration + Math.random() * 2 * 60 * 60 * 1000);
+        endDate = this.ensureUnique(endDate);
+      }
+      
       this.usedTimestamps.add(endDate.getTime());
       
       events.push({

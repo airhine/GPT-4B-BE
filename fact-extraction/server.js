@@ -61,6 +61,70 @@ app.get("/api/cards", async (req, res) => {
 });
 
 /**
+ * 이벤트 데이터 조회 및 검증
+ * GET /api/events/validate?cardIds=1,2,3 (optional)
+ */
+app.get("/api/events/validate", async (req, res) => {
+  try {
+    let queryStr = `
+      SELECT 
+        e.id,
+        e.title,
+        e.startDate,
+        e.endDate,
+        e.category,
+        e.linked_card_ids,
+        bc.name as card_name,
+        bc.id as card_id,
+        CASE 
+          WHEN e.startDate IS NULL OR e.endDate IS NULL THEN 'NULL_ERROR'
+          WHEN e.startDate >= e.endDate THEN 'DATE_INVALID'
+          WHEN TIMESTAMPDIFF(MINUTE, e.startDate, e.endDate) < 30 THEN 'DURATION_TOO_SHORT'
+          ELSE 'VALID'
+        END as validation_status,
+        TIMESTAMPDIFF(MINUTE, e.startDate, e.endDate) as duration_minutes
+      FROM events e
+      LEFT JOIN business_cards bc ON FIND_IN_SET(bc.id, e.linked_card_ids) > 0
+      WHERE e.userId = 1
+    `;
+    let params = [];
+    
+    if (req.query.cardIds) {
+      const cardIds = Array.isArray(req.query.cardIds) 
+        ? req.query.cardIds.map(id => parseInt(id))
+        : req.query.cardIds.split(',').map(id => parseInt(id.trim()));
+      if (cardIds.length > 0) {
+        queryStr += ` AND FIND_IN_SET(bc.id, ?) > 0`;
+        params.push(cardIds.join(','));
+      }
+    }
+    
+    queryStr += ` ORDER BY e.startDate DESC LIMIT 100`;
+    
+    const events = await query(queryStr, params);
+    
+    // 통계 계산
+    const stats = {
+      total: events.length,
+      valid: events.filter(e => e.validation_status === 'VALID').length,
+      nullError: events.filter(e => e.validation_status === 'NULL_ERROR').length,
+      dateInvalid: events.filter(e => e.validation_status === 'DATE_INVALID').length,
+      durationTooShort: events.filter(e => e.validation_status === 'DURATION_TOO_SHORT').length,
+    };
+    
+    res.json({
+      success: true,
+      events: events,
+      stats: stats,
+      hasErrors: stats.nullError > 0 || stats.dateInvalid > 0 || stats.durationTooShort > 0
+    });
+  } catch (error) {
+    console.error("이벤트 검증 오류:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * 기존 명함에 대해 추가 데이터 생성 (미리보기)
  * POST /api/scenario/preview-for-card
  * Body: { cardId: number, card: object }

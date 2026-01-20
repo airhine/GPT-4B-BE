@@ -861,6 +861,89 @@
                     </div>
                 </div>
             </div>
+
+            <!-- 이벤트 검증 섹션 -->
+            <div class="card" style="margin-bottom: 1rem;">
+                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <h2>✅ 이벤트 데이터 검증 (startDate/endDate)</h2>
+                    <button id="validateEventsBtn" class="btn btn-primary"
+                        style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+                        🔍 검증 실행
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="eventValidationStats" style="display: none; margin-bottom: 1rem;">
+                        <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem;">
+                            <div
+                                style="text-align: center; padding: 0.5rem; background: var(--bg-tertiary); border-radius: 6px;">
+                                <div style="font-size: 1.2rem; font-weight: bold; color: var(--text-primary);"
+                                    id="stat-total">0</div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary);">전체</div>
+                            </div>
+                            <div
+                                style="text-align: center; padding: 0.5rem; background: rgba(16, 185, 129, 0.2); border-radius: 6px;">
+                                <div style="font-size: 1.2rem; font-weight: bold; color: var(--accent-green);"
+                                    id="stat-valid">0</div>
+                                <div style="font-size: 0.75rem; color: var(--accent-green);">정상</div>
+                            </div>
+                            <div
+                                style="text-align: center; padding: 0.5rem; background: rgba(239, 68, 68, 0.2); border-radius: 6px;">
+                                <div style="font-size: 1.2rem; font-weight: bold; color: var(--accent-red);"
+                                    id="stat-invalid">0</div>
+                                <div style="font-size: 0.75rem; color: var(--accent-red);">오류</div>
+                            </div>
+                            <div
+                                style="text-align: center; padding: 0.5rem; background: rgba(245, 158, 11, 0.2); border-radius: 6px;">
+                                <div style="font-size: 1.2rem; font-weight: bold; color: var(--accent-orange);"
+                                    id="stat-null">0</div>
+                                <div style="font-size: 0.75rem; color: var(--accent-orange);">NULL</div>
+                            </div>
+                            <div
+                                style="text-align: center; padding: 0.5rem; background: rgba(245, 158, 11, 0.2); border-radius: 6px;">
+                                <div style="font-size: 1.2rem; font-weight: bold; color: var(--accent-orange);"
+                                    id="stat-short">0</div>
+                                <div style="font-size: 0.75rem; color: var(--accent-orange);">짧음(&lt;30분)</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="eventValidationTable" style="display: none; max-height: 500px; overflow-y: auto;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                            <thead style="position: sticky; top: 0; background: var(--bg-tertiary); z-index: 1;">
+                                <tr>
+                                    <th
+                                        style="padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border-color);">
+                                        ID</th>
+                                    <th
+                                        style="padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border-color);">
+                                        제목</th>
+                                    <th
+                                        style="padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border-color);">
+                                        명함</th>
+                                    <th
+                                        style="padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border-color);">
+                                        시작시간</th>
+                                    <th
+                                        style="padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border-color);">
+                                        종료시간</th>
+                                    <th
+                                        style="padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border-color);">
+                                        지속(분)</th>
+                                    <th
+                                        style="padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border-color);">
+                                        상태</th>
+                                </tr>
+                            </thead>
+                            <tbody id="eventValidationBody">
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="eventValidationMessage"
+                        style="text-align: center; color: var(--text-muted); padding: 1rem;">
+                        검증 버튼을 클릭하여 이벤트 데이터를 확인하세요
+                    </div>
+                </div>
+            </div>
+
             <div class="grid-2">
                 <div>
                     <div id="warningsContainer" class="warning-box">✓ 데이터 분석 대기중</div>
@@ -1036,7 +1119,23 @@
           </div>
           <div class="preview-card-body">
             ${renderSection('📝 메모', data.memos, m => `<div class="preview-item"><div class="preview-item-title">${(m.content || '').substring(0, 60)}...</div></div>`)}
-            ${renderSection('📅 일정', data.events, e => `<div class="preview-item"><div class="preview-item-title">${e.title}</div><div class="preview-item-meta">${e.category} | ${(e.startDate || '').split('T')[0]}</div></div>`)}
+            ${renderSection('📅 일정', data.events, e => {
+                const formatDateTime = (dt) => {
+                    if (!dt) return 'NULL';
+                    try {
+                        const d = new Date(dt);
+                        return d.toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                    } catch { return dt; }
+                };
+                const startStr = formatDateTime(e.startDate);
+                const endStr = formatDateTime(e.endDate);
+                const statusBadge = !e.startDate || !e.endDate
+                    ? '<span style="color: var(--accent-red); font-size: 0.7rem;">❌ NULL</span>'
+                    : new Date(e.startDate) >= new Date(e.endDate)
+                        ? '<span style="color: var(--accent-red); font-size: 0.7rem;">❌ 오류</span>'
+                        : '<span style="color: var(--accent-green); font-size: 0.7rem;">✓</span>';
+                return `<div class="preview-item"><div class="preview-item-title">${e.title} ${statusBadge}</div><div class="preview-item-meta">${e.category} | 시작: ${startStr} | 종료: ${endStr}</div></div>`;
+            })}
             ${renderSection('🎁 선물', data.gifts, g => `<div class="preview-item"><div class="preview-item-title">${g.giftName}</div><div class="preview-item-meta">${g.occasion} | ${(g.price || 0).toLocaleString()}원</div></div>`)}
             ${renderSection('💬 채팅', data.chats, c => `<div class="preview-item"><div class="preview-item-title">${c.title}</div></div>`)}
           </div>
@@ -1157,7 +1256,23 @@
             </div>
             <div class="preview-card-body">
               ${renderSection('📝 메모', data.memos, m => `<div class="preview-item"><div class="preview-item-title">${(m.content || '').substring(0, 60)}...</div></div>`)}
-              ${renderSection('📅 일정', data.events, e => `<div class="preview-item"><div class="preview-item-title">${e.title}</div><div class="preview-item-meta">${e.category} | ${(e.startDate || '').split('T')[0]}</div></div>`)}
+              ${renderSection('📅 일정', data.events, e => {
+                    const formatDateTime = (dt) => {
+                        if (!dt) return 'NULL';
+                        try {
+                            const d = new Date(dt);
+                            return d.toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                        } catch { return dt; }
+                    };
+                    const startStr = formatDateTime(e.startDate);
+                    const endStr = formatDateTime(e.endDate);
+                    const statusBadge = !e.startDate || !e.endDate
+                        ? '<span style="color: var(--accent-red); font-size: 0.7rem;">❌ NULL</span>'
+                        : new Date(e.startDate) >= new Date(e.endDate)
+                            ? '<span style="color: var(--accent-red); font-size: 0.7rem;">❌ 오류</span>'
+                            : '<span style="color: var(--accent-green); font-size: 0.7rem;">✓</span>';
+                    return `<div class="preview-item"><div class="preview-item-title">${e.title} ${statusBadge}</div><div class="preview-item-meta">${e.category} | 시작: ${startStr} | 종료: ${endStr}</div></div>`;
+                })}
               ${renderSection('🎁 선물', data.gifts, g => `<div class="preview-item"><div class="preview-item-title">${g.giftName}</div><div class="preview-item-meta">${g.occasion} | ${(g.price || 0).toLocaleString()}원</div></div>`)}
               ${renderSection('💬 채팅', data.chats, c => `<div class="preview-item"><div class="preview-item-title">${c.title}</div></div>`)}
             </div>
@@ -1383,6 +1498,88 @@
 
         initCharts();
         fetch(`${API}/analyze`).then(r => r.json()).then(updateCharts).catch(() => { });
+
+        // 이벤트 검증 기능
+        document.getElementById('validateEventsBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('validateEventsBtn');
+            const msgEl = document.getElementById('eventValidationMessage');
+            const statsEl = document.getElementById('eventValidationStats');
+            const tableEl = document.getElementById('eventValidationTable');
+            const bodyEl = document.getElementById('eventValidationBody');
+
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></div> 검증 중...';
+            msgEl.textContent = '이벤트 데이터 검증 중...';
+            statsEl.style.display = 'none';
+            tableEl.style.display = 'none';
+
+            try {
+                // 현재 분석 대상 cardIds 가져오기 (있으면 필터링)
+                const cardIdsText = document.getElementById('analyzedCardIds').textContent;
+                let url = `/api/events/validate`;
+                if (cardIdsText !== '전체 데이터' && cardIdsText.startsWith('[')) {
+                    const cardIds = cardIdsText.replace(/[\[\]]/g, '').split(',').map(id => id.trim()).filter(id => id);
+                    if (cardIds.length > 0) {
+                        url += `?cardIds=${cardIds.join(',')}`;
+                    }
+                }
+
+                const res = await fetch(url);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '검증 실패');
+
+                // 통계 업데이트
+                document.getElementById('stat-total').textContent = data.stats.total;
+                document.getElementById('stat-valid').textContent = data.stats.valid;
+                document.getElementById('stat-invalid').textContent = data.stats.dateInvalid;
+                document.getElementById('stat-null').textContent = data.stats.nullError;
+                document.getElementById('stat-short').textContent = data.stats.durationTooShort;
+
+                statsEl.style.display = 'block';
+
+                // 테이블 업데이트
+                if (data.events && data.events.length > 0) {
+                    bodyEl.innerHTML = data.events.map(event => {
+                        const statusColor = event.validation_status === 'VALID' ? 'var(--accent-green)'
+                            : event.validation_status === 'NULL_ERROR' ? 'var(--accent-red)'
+                                : event.validation_status === 'DATE_INVALID' ? 'var(--accent-red)'
+                                    : 'var(--accent-orange)';
+
+                        const statusText = event.validation_status === 'VALID' ? '✅ 정상'
+                            : event.validation_status === 'NULL_ERROR' ? '❌ NULL'
+                                : event.validation_status === 'DATE_INVALID' ? '❌ 날짜 오류'
+                                    : '⚠️ 짧음';
+
+                        const startDate = event.startDate ? new Date(event.startDate).toLocaleString('ko-KR') : 'NULL';
+                        const endDate = event.endDate ? new Date(event.endDate).toLocaleString('ko-KR') : 'NULL';
+
+                        return `
+                            <tr style="border-bottom: 1px solid var(--border-color); ${event.validation_status !== 'VALID' ? 'background: rgba(239, 68, 68, 0.1);' : ''}">
+                                <td style="padding: 0.5rem; color: var(--text-secondary);">${event.id}</td>
+                                <td style="padding: 0.5rem;">${(event.title || '').substring(0, 30)}${(event.title || '').length > 30 ? '...' : ''}</td>
+                                <td style="padding: 0.5rem; color: var(--text-secondary);">${event.card_name || '-'}</td>
+                                <td style="padding: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">${startDate}</td>
+                                <td style="padding: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">${endDate}</td>
+                                <td style="padding: 0.5rem; text-align: right; font-family: 'JetBrains Mono', monospace; color: ${statusColor};">${event.duration_minutes || '-'}분</td>
+                                <td style="padding: 0.5rem; color: ${statusColor}; font-weight: 500;">${statusText}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                    tableEl.style.display = 'block';
+                    msgEl.textContent = data.hasErrors
+                        ? `⚠️ 오류 발견: NULL ${data.stats.nullError}개, 날짜 오류 ${data.stats.dateInvalid}개, 짧음 ${data.stats.durationTooShort}개`
+                        : `✓ 모든 이벤트가 정상입니다 (총 ${data.stats.total}개)`;
+                } else {
+                    msgEl.textContent = '검증된 이벤트가 없습니다';
+                }
+            } catch (e) {
+                msgEl.textContent = `❌ 오류: ${e.message}`;
+                msgEl.style.color = 'var(--accent-red)';
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '🔍 검증 실행';
+            }
+        });
     </script>
 </body>
 
