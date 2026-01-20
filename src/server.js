@@ -14,6 +14,9 @@ import chatRoutes from "./routes/chat.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import memoRoutes from "./routes/memo.routes.js";
 import preferenceRoutes from "./routes/preference.routes.js";
+import extractedFactRoutes from "./routes/extractedFact.routes.js";
+import sourceEventRoutes from "./routes/sourceEvent.routes.js";
+import relationshipSummaryRoutes from "./routes/relationshipSummary.routes.js";
 
 // Middleware
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -77,6 +80,9 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/memo", memoRoutes);
 app.use("/api/profile", preferenceRoutes);
+app.use("/api/extracted-facts", extractedFactRoutes);
+app.use("/api/source-events", sourceEventRoutes);
+app.use("/api/relationship-summary", relationshipSummaryRoutes);
 
 // Error handling
 app.use(notFound);
