@@ -72,7 +72,6 @@ class BusinessCard {
       company,
       phone,
       email,
-      memo,
       image,
       gender,
       design = "design-1",
@@ -80,8 +79,8 @@ class BusinessCard {
     } = cardData;
 
     const [result] = await pool.query(
-      `INSERT INTO business_cards (userId, name, position, company, phone, email, memo, image, gender, design, isFavorite)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO business_cards (userId, name, position, company, phone, email, image, gender, design, isFavorite)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         name,
@@ -89,7 +88,6 @@ class BusinessCard {
         company,
         phone,
         email,
-        memo,
         image,
         gender,
         design,
@@ -104,8 +102,10 @@ class BusinessCard {
   static async update(id, userId, updateData) {
     const fields = [];
     const values = [];
+    const skipKeys = ["memo"]; // memo 칼럼 제거된 DB 대응
 
     Object.keys(updateData).forEach((key) => {
+      if (skipKeys.includes(key)) return;
       if (updateData[key] !== undefined) {
         fields.push(`${key} = ?`);
         values.push(updateData[key]);

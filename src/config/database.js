@@ -69,6 +69,7 @@ const createTables = async () => {
         company VARCHAR(255),
         phone VARCHAR(50),
         email VARCHAR(255),
+        gender VARCHAR(50),
         memo TEXT,
         image TEXT,
         design ENUM('design-1', 'design-2', 'design-3', 'design-4', 'design-5', 'design-6') DEFAULT 'design-1',
@@ -82,6 +83,22 @@ const createTables = async () => {
         INDEX idx_createdAt (createdAt)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+
+    // 기존 테이블에 gender 컬럼이 없으면 추가 (memo 제거 등 스키마 변경 대응)
+    try {
+      const [cols] = await connection.query(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'business_cards' AND COLUMN_NAME = 'gender'`,
+        [process.env.DB_NAME || 'HCI_2025']
+      );
+      if (!cols || cols.length === 0) {
+        await connection.query(
+          `ALTER TABLE business_cards ADD COLUMN gender VARCHAR(50) NULL AFTER email`
+        );
+        logger.info("business_cards.gender column added (migration)");
+      }
+    } catch (migrationErr) {
+      logger.warn("business_cards gender migration skipped", { message: migrationErr.message });
+    }
 
     // Gifts 테이블
     await connection.query(`

@@ -2,6 +2,7 @@ import express from "express";
 import { body, validationResult } from "express-validator";
 import BusinessCard from "../models/BusinessCard.model.js";
 import { authenticate } from "../middleware/auth.middleware.js";
+import { logger } from "../utils/logger.js";
 
 const router = express.Router();
 
@@ -136,6 +137,11 @@ router.post(
         data: card,
       });
     } catch (error) {
+      logger.error("POST /api/cards error", {
+        message: error.message,
+        sqlMessage: error.sqlMessage,
+        code: error.code,
+      });
       res.status(500).json({
         success: false,
         message: error.message,
