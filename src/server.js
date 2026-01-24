@@ -19,6 +19,7 @@ import sourceEventRoutes from "./routes/sourceEvent.routes.js";
 import relationshipSummaryRoutes from "./routes/relationshipSummary.routes.js";
 import cardSearchRoutes from "./routes/cardSearch.routes.js";
 import groupRoutes from "./routes/group.routes.js";
+import graphRoutes from "./routes/graph.routes.js";
 
 // Middleware
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -87,6 +88,7 @@ app.use("/api/source-events", sourceEventRoutes);
 app.use("/api/relationship-summary", relationshipSummaryRoutes);
 app.use("/api/card-search", cardSearchRoutes);
 app.use("/api/groups", groupRoutes);
+app.use("/api/graph", graphRoutes);
 
 // Error handling
 app.use(notFound);
