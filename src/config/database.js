@@ -201,6 +201,36 @@ const createTables = async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
+    // Card Groups 테이블
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS card_groups (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        userId INT NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        displayOrder INT DEFAULT 0,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_userId (userId),
+        INDEX idx_displayOrder (displayOrder)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // Group Cards 테이블 (Many-to-Many)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS group_cards (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        groupId INT NOT NULL,
+        businessCardId INT NOT NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (groupId) REFERENCES card_groups(id) ON DELETE CASCADE,
+        FOREIGN KEY (businessCardId) REFERENCES business_cards(id) ON DELETE CASCADE,
+        UNIQUE KEY unique_group_card (groupId, businessCardId),
+        INDEX idx_groupId (groupId),
+        INDEX idx_businessCardId (businessCardId)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
     connection.release();
     logger.info("Database tables created/verified successfully");
   } catch (error) {
