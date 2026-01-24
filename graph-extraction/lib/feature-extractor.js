@@ -87,7 +87,6 @@ async function extractBasicFeatures(cardId, userId) {
     isFavorite: card.isFavorite ? 1 : 0,
     hasPhone: card.phone ? 1 : 0,
     hasEmail: card.email ? 1 : 0,
-    hasMemo: card.memo ? 1 : 0,
   };
 }
 
@@ -347,7 +346,7 @@ async function extractFactFeatures(cardId) {
 export async function extractEssentialDataForLLM(cardId, userId = 1) {
   // 기본 정보
   const [card] = await query(
-    `SELECT name, company, position, memo, gender FROM business_cards 
+    `SELECT name, company, position, gender FROM business_cards 
      WHERE id = ? AND userId = ?`,
     [cardId, userId]
   );
