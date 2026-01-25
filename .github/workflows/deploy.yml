@@ -19,13 +19,11 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install dependencies (production only)
-        run: npm ci --omit=dev
-
-      - name: Create deployment package (with node_modules)
+      - name: Create deployment package (without node_modules)
         run: |
           zip -r deploy.zip . \
             -x "*.git*" \
+            -x "node_modules/*" \
             -x "chroma_data/*" \
             -x ".env" \
             -x "*.md" \

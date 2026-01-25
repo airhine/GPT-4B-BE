@@ -11,7 +11,8 @@
     "test": "jest",
     "test:auth": "node tests/auth.test.js",
     "test:oauth:google": "node tests/oauth.test.js google",
-    "test:oauth:apple": "node tests/oauth.test.js apple"
+    "test:oauth:apple": "node tests/oauth.test.js apple",
+    "postinstall": "npm rebuild sharp || true"
   },
   "keywords": [
     "gpt-4b",
