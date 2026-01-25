@@ -577,6 +577,289 @@ router.get("/llm-auto", (req, res, next) => {
 });
 
 /**
+ * SSE 방식의 자동 피드백 루프 실행
+ * 실시간 진행률 전송
+ * GET /api/graph/llm-auto-stream
+ */
+router.get("/llm-auto-stream", async (req, res) => {
+  // SSE 헤더 설정
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.flushHeaders();
+
+  // SSE 이벤트 전송 헬퍼
+  const sendEvent = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const userId = parseInt(req.query.userId) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const maxIterations = parseInt(req.query.maxIterations) || 3;
+    
+    sendEvent('start', { 
+      message: '분석 시작',
+      totalSteps: 5,
+      currentStep: 0,
+      progress: 0
+    });
+
+    console.log(`\n🔄 [SSE] 자동 피드백 루프 시작 (최대 ${maxIterations}회)`);
+    
+    // Step 1: 피처 추출
+    sendEvent('progress', { 
+      message: '명함 데이터 추출 중...',
+      currentStep: 1,
+      totalSteps: 5,
+      progress: 10
+    });
+    
+    let iteration = 0;
+    let currentFeatures = await extractFeaturesForAllCards(userId);
+    let filterResult = filterSignificantFeatures(currentFeatures);
+    let analysisResults = null;
+    let quality = null;
+    const history = [];
+    
+    sendEvent('progress', { 
+      message: `${filterResult.filteredFeatures.length}개 명함 데이터 추출 완료`,
+      currentStep: 1,
+      totalSteps: 5,
+      progress: 20
+    });
+    
+    while (iteration < maxIterations) {
+      iteration++;
+      
+      sendEvent('progress', { 
+        message: `반복 ${iteration}/${maxIterations} - 분석 준비 중...`,
+        currentStep: 2,
+        totalSteps: 5,
+        progress: 20 + (iteration - 1) * 20,
+        iteration
+      });
+      
+      // 1. 상호작용 점수 기반 정렬
+      const sortedByInteraction = [...filterResult.filteredFeatures].sort((a, b) => {
+        const scoreA = calculateInteractionScore(a.features);
+        const scoreB = calculateInteractionScore(b.features);
+        return scoreB - scoreA;
+      });
+      
+      // 2. 상위 N개만 분석
+      const cardsToAnalyze = sortedByInteraction.slice(0, limit);
+      
+      sendEvent('progress', { 
+        message: `${cardsToAnalyze.length}명의 관계 분석 중...`,
+        currentStep: 3,
+        totalSteps: 5,
+        progress: 30 + (iteration - 1) * 20,
+        analyzingCount: cardsToAnalyze.length
+      });
+      
+      const cardsData = [];
+      let cardIndex = 0;
+      
+      for (const card of cardsToAnalyze) {
+        cardIndex++;
+        const cardData = await extractEssentialDataForLLM(card.cardId, userId);
+        if (cardData) {
+          cardsData.push({ cardData, features: { features: card.features } });
+        }
+        
+        // 10개마다 진행률 업데이트
+        if (cardIndex % 5 === 0 || cardIndex === cardsToAnalyze.length) {
+          const cardProgress = Math.round((cardIndex / cardsToAnalyze.length) * 100);
+          sendEvent('progress', { 
+            message: `명함 데이터 수집 중... (${cardIndex}/${cardsToAnalyze.length})`,
+            currentStep: 3,
+            totalSteps: 5,
+            progress: 30 + (cardProgress * 0.2),
+            cardProgress
+          });
+        }
+      }
+      
+      // LLM 분석 (개별 카드마다 진행률 전송)
+      sendEvent('progress', { 
+        message: `AI가 ${cardsData.length}개 관계를 분석 중...`,
+        currentStep: 4,
+        totalSteps: 5,
+        progress: 50
+      });
+      
+      // analyzeMultipleRelationships 호출 (진행률 콜백 추가)
+      analysisResults = [];
+      for (let i = 0; i < cardsData.length; i++) {
+        const cardData = cardsData[i];
+        try {
+          const result = await analyzeRelationshipWithLLM(cardData.cardData, cardData.features);
+          analysisResults.push(result);
+        } catch (error) {
+          console.error(`카드 분석 오류:`, error);
+        }
+        
+        // 진행률 업데이트
+        const analysisProgress = Math.round(((i + 1) / cardsData.length) * 100);
+        sendEvent('progress', { 
+          message: `AI 분석 중... (${i + 1}/${cardsData.length})`,
+          currentStep: 4,
+          totalSteps: 5,
+          progress: 50 + (analysisProgress * 0.3),
+          analysisProgress,
+          analyzedCount: i + 1,
+          totalCount: cardsData.length
+        });
+      }
+      
+      // 품질 평가
+      quality = evaluateAnalysisQuality(analysisResults);
+      
+      history.push({
+        iteration,
+        quality: { ...quality },
+        analyzedCount: analysisResults.length,
+        featureCount: filterResult.significantFeatures.length
+      });
+      
+      sendEvent('progress', { 
+        message: `품질 평가 완료 - ${quality.isGood ? '양호' : '개선 필요'}`,
+        currentStep: 4,
+        totalSteps: 5,
+        progress: 85,
+        quality: quality.isGood
+      });
+      
+      if (quality.isGood || !quality.needsIteration) {
+        break;
+      }
+      
+      if (iteration >= maxIterations) {
+        break;
+      }
+      
+      // 피처 조작 전략 요청
+      sendEvent('progress', { 
+        message: 'AI가 분석 전략을 개선 중...',
+        currentStep: 4,
+        totalSteps: 5,
+        progress: 88
+      });
+      
+      const strategy = await requestFeatureStrategy(
+        quality,
+        filterResult.significantFeatures,
+        filterResult.featureStats
+      );
+      
+      history[history.length - 1].strategy = {
+        diagnosis: strategy.diagnosis,
+        operations: strategy.featureOperations.map(op => ({
+          operation: op.operation,
+          target: op.targetFeature,
+          description: op.description
+        }))
+      };
+      
+      currentFeatures = executeFeatureOperations(currentFeatures, strategy.featureOperations);
+      filterResult = filterSignificantFeatures(currentFeatures);
+    }
+    
+    // Step 5: 그래프 데이터 생성
+    sendEvent('progress', { 
+      message: '그래프 데이터 생성 중...',
+      currentStep: 5,
+      totalSteps: 5,
+      progress: 90
+    });
+    
+    const nodes = [
+      {
+        id: "user",
+        label: "나",
+        type: "user",
+        size: 40,
+        color: "#3b82f6",
+        fixed: true
+      }
+    ];
+    
+    const edges = [];
+    
+    for (const result of analysisResults) {
+      if (!result.analysis) continue;
+      
+      const analysis = result.analysis;
+      const score = analysis.relationshipScore;
+      
+      nodes.push({
+        id: `card_${result.cardId}`,
+        cardId: result.cardId,
+        label: result.cardInfo?.name || `Card ${result.cardId}`,
+        company: result.cardInfo?.company,
+        type: "contact",
+        score,
+        grade: {
+          level: analysis.grade,
+          label: analysis.gradeLabel,
+          color: analysis.gradeColor
+        },
+        relationshipType: analysis.relationshipType,
+        summary: analysis.summary,
+        reasoning: analysis.reasoning,
+        rank: result.rank,
+        size: 15 + (score / 100) * 20,
+        color: analysis.gradeColor,
+      });
+      
+      edges.push({
+        source: "user",
+        target: `card_${result.cardId}`,
+        weight: score,
+        distance: 300 - (score / 100) * 200,
+        width: 1 + (score / 100) * 4,
+        color: analysis.gradeColor,
+        label: analysis.relationshipType
+      });
+    }
+    
+    const summary = summarizeAnalysisResults(analysisResults);
+    
+    // 완료 이벤트 전송
+    sendEvent('complete', {
+      success: true,
+      message: '분석 완료!',
+      progress: 100,
+      data: {
+        graph: { nodes, edges },
+        summary,
+        quality,
+        feedbackLoop: {
+          totalIterations: iteration,
+          improved: iteration > 1,
+          history
+        },
+        usedFeatures: filterResult.significantFeatures
+      }
+    });
+    
+    console.log(`\n✅ [SSE] 분석 완료 (${analysisResults.length}개 관계)`);
+    
+  } catch (error) {
+    console.error("[SSE] 피드백 루프 오류:", error);
+    sendEvent('error', { 
+      message: error.message,
+      error: true
+    });
+  } finally {
+    res.end();
+  }
+});
+
+/**
  * 품질 평가만 실행
  * POST /api/graph/llm-evaluate
  */
